@@ -19,8 +19,13 @@ public:
     void sendTrainerMode16ch(uint16_t *channels);
     void updateChannelRamp();
 
+    uint32_t getPacketCount() const { return _packetCount; }
+    bool getLastSendSuccess() const { return _lastSendOk; }
+
 private:
     uint8_t _uid[6];
+    uint32_t _packetCount = 0;
+    bool _lastSendOk = false;
 
     uint16_t rampChannels[16];
 

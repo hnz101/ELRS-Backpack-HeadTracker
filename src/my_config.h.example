@@ -1,0 +1,62 @@
+#pragma once
+#include <stdint.h>
+
+// ======================================================
+// ExpressLRS Binding UID
+// ======================================================
+// Generated from your ELRS binding phrase
+// Confirmed from ELRS Web Flasher / TX Web UI:
+// UID: {0, 0, 0, 0, 0, 0} (0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+#define MY_CUSTOM_UID {0, 0, 0, 0, 0, 0}
+
+// ======================================================
+// Hardware Pins (WEMOS LOLIN S3 Mini Pro)
+// ======================================================
+#define PIN_I2C_SDA         12
+#define PIN_I2C_SCL         11
+
+// Onboard Buttons
+#define PIN_BTN_LEFT        0   // Boot / Left button
+#define PIN_BTN_CENTER      47  // Middle / OK button (Zero / Center)
+#define PIN_BTN_RIGHT       48  // Right button (Mode / Menu)
+
+// Onboard TFT (0.85" 128x128)
+#define PIN_TFT_MOSI        38
+#define PIN_TFT_MISO        39
+#define PIN_TFT_SCLK        40
+#define PIN_TFT_CS          35
+#define PIN_TFT_DC          36
+#define PIN_TFT_RST         34
+#define PIN_TFT_BL          33  // Backlight enable
+
+// Onboard RGB LED (WS2812)
+#define PIN_RGB_PWR         7
+#define PIN_RGB_DATA        8
+
+// ======================================================
+// Head Tracker Configuration
+// ======================================================
+// Maximum physical deflection angle (in degrees) mapping to full stick throw (-100% to +100%)
+#define HT_MAX_ANGLE_PAN    90.0f  // +/- 90 degrees head pan
+#define HT_MAX_ANGLE_TILT   60.0f  // +/- 60 degrees head tilt
+#define HT_MAX_ANGLE_ROLL   45.0f  // +/- 45 degrees head roll
+
+// Axis Inversion (set to true to reverse direction)
+#define HT_INVERT_PAN       true   // Inverted per user request
+#define HT_INVERT_TILT      true   // Inverted per user request
+#define HT_INVERT_ROLL      false
+
+// EdgeTX Trainer Channel Assignment (0-indexed: 0 = TR1, 1 = TR2, 2 = TR3)
+// Standard: TR1 = Pan, TR2 = Tilt, TR3 = Roll
+// Swap HT_CH_TILT and HT_CH_ROLL here if your radio model mixer prefers TR2=Roll, TR3=Tilt
+#define HT_CH_PAN           0   // TR1
+#define HT_CH_TILT          1   // TR2
+#define HT_CH_ROLL          2   // TR3
+
+// CRSF 11-bit Channel Range (Standard CRSF)
+#define CRSF_CHANNEL_MIN    172   // 988 us (-100%)
+#define CRSF_CHANNEL_CENTER 992   // 1500 us (0%)
+#define CRSF_CHANNEL_MAX    1811  // 2012 us (+100%)
+
+// Transmission rate to ELRS Backpack (50 Hz = 20 ms)
+#define HT_UPDATE_INTERVAL_MS 20

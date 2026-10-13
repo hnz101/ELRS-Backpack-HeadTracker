@@ -87,16 +87,10 @@ esp_err_t custom_esp_now_send(const uint8_t *peer_mac, const uint8_t *data, size
     // Zwinge das WLAN-Modul direkt vor dem Schuss hart auf Kanal 1
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 
-    // Auf die Antenne feuern
-    bool was_promisc = false;
-    esp_wifi_get_promiscuous(&was_promisc);
-    if (!was_promisc) esp_wifi_set_promiscuous(true);
-
+    // Auf die Antenne feuern (ohne Promiscuous-Mode/Sniffer, um ESP-NOW Empfang nicht zu storen)
     // WICHTIG: Das 'false' am Ende verbietet der ESP32-Hardware, 
-    // unsere manuellen Sequence-Bytes (22-23) zu überschreiben!
-    esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, raw_frame, frame_len, true);
-
-    if (!was_promisc) esp_wifi_set_promiscuous(false);
+    // unsere manuellen Sequence-Bytes (22-23) zu ueberschreiben!
+    esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, raw_frame, frame_len, false);
 
     return result;
 }
@@ -124,15 +118,18 @@ void FakeVRXFakeTrainer::sendFakeHeadtracking(uint16_t pan, uint16_t roll, uint1
 #if defined(ESP32)
     printPacketDump("ESP32-TX", _uid, buf, size);
     int result = custom_esp_now_send(_uid, buf, size);
+    _packetCount++;
+    _lastSendOk = (result == ESP_OK);
     
     if (result != ESP_OK) {
         LOG_WARN("custom_esp_now_send failed (%d)", result);
     } else {
-        // Hier ist das visuelle Feedback für dein Terminal!
         LOG_DEBUG("ESP-NOW Send OK (Bypass)   \n");
     }
 #else
     int result = esp_now_send(_uid, buf, size);
+    _packetCount++;
+    _lastSendOk = (result == 0);
 
     if (result != 0)
         LOG_WARN("esp_now_send failed (%d)", result);
@@ -158,15 +155,18 @@ void FakeVRXFakeTrainer::sendTrainerMode16ch(uint16_t *channels)
 #if defined(ESP32)
     printPacketDump("ESP32-TX", _uid, buf, size);
     int result = custom_esp_now_send(_uid, buf, size);
+    _packetCount++;
+    _lastSendOk = (result == ESP_OK);
     
     if (result != ESP_OK) {
         LOG_WARN("custom_esp_now_send failed (%d)", result);
     } else {
-        // Hier ist das visuelle Feedback für dein Terminal!
         LOG_DEBUG("ESP-NOW Send OK (Bypass)   \n");
     }
 #else
     int result = esp_now_send(_uid, buf, size);
+    _packetCount++;
+    _lastSendOk = (result == 0);
 
     if (result != 0)
         LOG_WARN("esp_now_send failed (%d)", result);

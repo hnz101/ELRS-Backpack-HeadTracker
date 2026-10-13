@@ -16,9 +16,15 @@
 #include "msp.h"   // MSP Paket Handling
 #include "msptypes.h"
 #include "fake_vrx_fake_trainer.h"
-#include <math.h>
 #include "application.h"
 #include "types.h"
+#include "my_config.h"
+
+#if defined(ESP32)
+#include "display_manager.h"
+#include "headtracker.h"
+#include "button_manager.h"
+#endif
 
 // ======================================================
 // 2. Platform Selection (ESP32 / ESP8266)
@@ -135,6 +141,17 @@ FakeVRXFakeTrainer vrxModule;
 MSP recv_msp;
 CRSF crsf;
 
+#if defined(ESP32)
+DisplayManager display;
+HeadTracker headtracker;
+ButtonManager buttons;
+bool waveMode = false;
+uint32_t lastTxTime = 0;
+uint32_t lastDisplayTime = 0;
+uint32_t rxPacketCount = 0;
+uint32_t lastRxPacketTime = 0;
+#endif
+
 // ===============================
 // RC Channels
 // ===============================
@@ -163,7 +180,11 @@ bool finalHomeStored = false;
 // ESP-NOW Receive Callback
 // ======================================================
 #if defined(ESP32)
+#if defined(ESP_IDF_VERSION) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incomingData, int len) {
+#else
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+#endif
     if (len <= 8 || incomingData == NULL) return;
 
     if (incomingData[8] == 0 && incomingData[9] == 0 && len > 10) {
@@ -197,7 +218,11 @@ void OnDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 // ======================================================
 
 #if defined(ESP32)
+#if defined(ESP_IDF_VERSION) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+#else
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+#endif
     // Beim ESP32 ist status 0 (ESP_NOW_SEND_SUCCESS)
     bool success = (status == ESP_NOW_SEND_SUCCESS);
 #else
@@ -232,7 +257,8 @@ void initWiFi()
         WiFi.mode(WIFI_STA); 
         // DAS IST PFLICHT FÜR DEN RAW-FRAME:
         esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B);
-        esp_wifi_set_max_tx_power(8); //Problem with bad Antenna on esp32c3
+        // esp_wifi_set_max_tx_power(8); // DISABLED: was throttling TX power to 2 dBm (1.5mW)
+        esp_wifi_set_max_tx_power(78); // Set to maximum 19.5 dBm
     #else
         WiFi.mode(WIFI_STA);
         //WiFi.mode(WIFI_AP_STA); // Ermöglicht AP und Station gleichzeitig
@@ -319,7 +345,7 @@ void initInfo()
 void setup() {
     initSerial();
     #if defined(ESP32)
-    delay(3000);
+    delay(1000);
     #endif
     initWiFi();
     initMac();
@@ -328,6 +354,12 @@ void setup() {
     vrxModule.init(UID);
     initRamp();
     initInfo();
+
+    #if defined(ESP32)
+    display.begin();
+    buttons.begin();
+    headtracker.begin();
+    #endif
 }
 
 // ======================================================
@@ -355,6 +387,27 @@ void loop()
         }
     }
 
+    #if defined(ESP32)
+    // ======================================================
+    // Button & HeadTracker Handling
+    // ======================================================
+    ButtonEvent evt = buttons.update();
+    if (evt == BTN_CENTER_CLICK) {
+        headtracker.center();
+        buttons.setLed(0, 80, 80); // Cyan acknowledge
+    } else if (evt == BTN_CENTER_LONG) {
+        buttons.setLed(80, 80, 0); // Yellow calibrate
+        headtracker.calibrate();
+    } else if (evt == BTN_RIGHT_CLICK) {
+        waveMode = !waveMode; // Toggle live HT vs Test Wave
+        LOG_INFO("Mode switched: %s", waveMode ? "TEST WAVE" : "LIVE HEADTRACKER");
+    } else if (evt == BTN_LEFT_CLICK) {
+        display.toggleDriver(); // Toggle ST7789 <-> GC9A01
+    }
+
+    headtracker.update();
+    #endif
+
     // ======================================================
     // ESP-NOW Receive Handling (CRSF)
     // ======================================================
@@ -368,6 +421,8 @@ void loop()
             len_to_process = crsf_len;
             memcpy(crsf.crsf_buf, espnow_buffer, len_to_process);
             espnow_received = false;
+            rxPacketCount++;
+            lastRxPacketTime = millis();
             portEXIT_CRITICAL(&mux);
             processCRSFFrame(crsf.crsf_buf, len_to_process);
             #else
@@ -380,13 +435,49 @@ void loop()
     }
 
     // ======================================================
-    // Regular Mode
+    // Transmit to ELRS Backpack
     // ======================================================
     if (radioMode != MODE_RX_ONLY)
     {
-        vrxModule.updateChannelRamp();   // ESP-NOW senden
         #if defined(ESP32)
-        delay(10);
+        uint32_t now = millis();
+        if (now - lastTxTime >= HT_UPDATE_INTERVAL_MS) {
+            lastTxTime = now;
+            if (waveMode) {
+                vrxModule.updateChannelRamp();
+            } else {
+                uint16_t channels[16];
+                headtracker.getChannels16(channels);
+                vrxModule.sendTrainerMode16ch(channels);
+            }
+
+            if (vrxModule.getLastSendSuccess()) {
+                buttons.setLed(0, 40, 0); // Green
+            } else {
+                buttons.setLed(40, 0, 0); // Red on send error
+            }
+        }
+
+        // Display refresh (~20 Hz)
+        if (now - lastDisplayTime >= 50) {
+            lastDisplayTime = now;
+            display.renderUI(
+                headtracker.getPan(),
+                headtracker.getTilt(),
+                headtracker.getRoll(),
+                headtracker.getCrsfPan(),
+                headtracker.getCrsfTilt(),
+                headtracker.getCrsfRoll(),
+                vrxModule.getPacketCount(),
+                vrxModule.getLastSendSuccess(),
+                rxPacketCount,
+                lastRxPacketTime,
+                waveMode ? "TEST-WAVE" : headtracker.getSensorName(),
+                UID
+            );
+        }
+        #else
+        vrxModule.updateChannelRamp();   // ESP-NOW senden
         #endif
     }
 }
