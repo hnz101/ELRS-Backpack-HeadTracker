@@ -4,9 +4,8 @@
 // ======================================================
 // ExpressLRS Binding UID
 // ======================================================
-// Generated from your ELRS binding phrase
-// Confirmed from ELRS Web Flasher / TX Web UI:
-// UID: {0, 0, 0, 0, 0, 0} (0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+// Generated from your ELRS binding phrase via https://expresslrs.github.io/web-flasher/
+// Replace the 6 bytes below with your own UID from the ELRS Web Flasher / TX Web UI:
 #define MY_CUSTOM_UID {0, 0, 0, 0, 0, 0}
 
 // ======================================================
