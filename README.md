@@ -91,6 +91,10 @@ The [`case/`](case) folder contains the custom enclosure specifically engineered
 * **[`case/Headtracker-Case_V6.3mf`](case/Headtracker-Case_V6.3mf):** Ready-to-slice 3MF project file.
 * **[`case/Headtracker-Case_V6.scad`](case/Headtracker-Case_V6.scad):** Parametric OpenSCAD file (uses the [BOSL2 library](https://github.com/BelfrySCAD/BOSL2)) allowing you to customize layout (`stacked` vs. `flat`), goggle strap slots vs. flat Velcro backplate, tolerances, and button plunger length (`1.70 mm`).
 
+| CAD Model & Slicer Preview | Real-Life Assembled HeadTracker Case |
+| :---: | :---: |
+| ![Headtracker Case CAD](img/Headtracker_case_1.jpg) | ![Headtracker Case Real Life](img/Headtracker_case_2.jpg) |
+
 **Printing & Assembly Tips:**
 * Recommended material: **PETG** or **PLA+** with `0.16 mm` or `0.20 mm` layer height, no supports required when printing `base` and `lid` flat on the bed.
 * Slide the BNO085 into the lower rail slot first, then snap the ESP32-C3-Zero under the rear retention clip on the upper deck with the USB-C port facing the front opening, and close the L-shaped snap lid.
@@ -247,6 +251,10 @@ Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://gi
 ### 2. Gehäuse drucken (`case/`)
 * Drucke [`case/Headtracker-Case_V6.3mf`](case/Headtracker-Case_V6.3mf) aus PETG oder PLA+ (Schichthöhe `0.16 mm`–`0.20 mm`, kein Support nötig).
 * Zuerst den BNO085 in die untere Führungsschiene einschieben, danach den ESP32-C3-Zero oben unter den hinteren Halteclip drücken und den L-Deckel aufclipsen.
+
+| 3D-Modell & Slicer-Ansicht | Fertig aufgebautes Gehäuse im Einsatz |
+| :---: | :---: |
+| ![Headtracker Case CAD](img/Headtracker_case_1.jpg) | ![Headtracker Case Real Life](img/Headtracker_case_2.jpg) |
 
 ### 3. ELRS UID eintragen & Firmware flashen
 1. Eigene 6-Byte `UID` über den **[ExpressLRS Web Flasher](https://expresslrs.github.io/web-flasher/)** aus der eigenen Binding-Phrase generieren.
