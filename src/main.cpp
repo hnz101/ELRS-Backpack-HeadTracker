@@ -24,6 +24,7 @@
 #include "display_manager.h"
 #include "headtracker.h"
 #include "button_manager.h"
+#include "serial_display.h"
 #endif
 
 // ======================================================
@@ -142,14 +143,18 @@ MSP recv_msp;
 CRSF crsf;
 
 #if defined(ESP32)
+#if FEATURE_DISPLAY
 DisplayManager display;
+#endif
 HeadTracker headtracker;
 ButtonManager buttons;
+SerialDisplay serialDisplay;
 bool waveMode = false;
 uint32_t lastTxTime = 0;
 uint32_t lastDisplayTime = 0;
 uint32_t rxPacketCount = 0;
 uint32_t lastRxPacketTime = 0;
+int8_t currentTxPower = WIFI_TX_POWER_DEFAULT;
 #endif
 
 // ===============================
@@ -257,8 +262,7 @@ void initWiFi()
         WiFi.mode(WIFI_STA); 
         // DAS IST PFLICHT FÜR DEN RAW-FRAME:
         esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B);
-        // esp_wifi_set_max_tx_power(8); // DISABLED: was throttling TX power to 2 dBm (1.5mW)
-        esp_wifi_set_max_tx_power(78); // Set to maximum 19.5 dBm
+        esp_wifi_set_max_tx_power(currentTxPower);
     #else
         WiFi.mode(WIFI_STA);
         //WiFi.mode(WIFI_AP_STA); // Ermöglicht AP und Station gleichzeitig
@@ -273,6 +277,8 @@ void initMac()
         esp_wifi_set_mac(WIFI_IF_STA, UID);
         esp_wifi_start(); 
         esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+        esp_wifi_set_max_tx_power(currentTxPower);
+        LOG_INFO("WiFi TX Power set to %d (%.2f dBm)", currentTxPower, (float)currentTxPower * 0.25f);
     #else
         wifi_set_macaddr(STATION_IF, UID);
     #endif
@@ -356,9 +362,12 @@ void setup() {
     initInfo();
 
     #if defined(ESP32)
+    #if FEATURE_DISPLAY
     display.begin();
+    #endif
     buttons.begin();
     headtracker.begin();
+    serialDisplay.begin();
     #endif
 }
 
@@ -369,22 +378,91 @@ void setup() {
 void loop()
 {
     // ======================================================
-    // Serial Mode Switch (only during config window)
+    // Serial Command Handling
     // ======================================================
-    if (millis() - configWindowStart < CONFIG_WINDOW_MS)
+    if (Serial.available())
     {
-        if (Serial.available())
+        char c = Serial.read();
+
+        if (c >= '1' && c <= '3')
         {
-            char c = Serial.read();
-
-            // Nur echte Ziffern akzeptieren
-            if (c >= '1' && c <= '3')
-            {
-                radioMode = (RadioMode)(c - '1');
-
-                LOG_INFO("RadioMode changed to %d", radioMode + 1);
-            }
+            radioMode = (RadioMode)(c - '1');
+            LOG_INFO("RadioMode changed to %d", radioMode + 1);
         }
+        #if defined(ESP32)
+        else if (c == 'c' || c == ' ')
+        {
+            headtracker.center();
+            buttons.flashLed(0, 80, 80, 500); // Cyan acknowledge
+            LOG_INFO("[EVENT] HeadTracker Centered / Zeroed (Serial)");
+        }
+        else if (c == 'r')
+        {
+            buttons.flashLed(80, 80, 0, 800); // Yellow calibrate
+            headtracker.calibrate();
+            LOG_INFO("[EVENT] HeadTracker Calibrated / Tared (Serial)");
+        }
+        else if (c == 'w')
+        {
+            waveMode = !waveMode;
+            LOG_INFO("Mode switched: %s", waveMode ? "TEST WAVE" : "LIVE HEADTRACKER");
+        }
+        else if (c == 'f')
+        {
+            headtracker.setFusionMode(headtracker.getFusionMode() + 1);
+            LOG_INFO("Switched IMU Fusion Mode to: %s", headtracker.getSensorName());
+        }
+        else if (c == 'p')
+        {
+            headtracker.toggleInvertTilt();
+            buttons.flashLed(0, 80, 80, 300);
+        }
+        else if (c == 's')
+        {
+            headtracker.toggleSwapPitchRoll();
+            buttons.flashLed(80, 80, 0, 300);
+        }
+        else if (c == 'y')
+        {
+            headtracker.toggleInvertPan();
+            buttons.flashLed(0, 80, 80, 300);
+        }
+        else if (c == 'o')
+        {
+            headtracker.toggleInvertRoll();
+            buttons.flashLed(0, 80, 80, 300);
+        }
+        else if (c == 'm')
+        {
+            serialDisplay.toggleMode();
+        }
+        else if (c == 't')
+        {
+            // Cycle WiFi TX Power: 40 (10dBm) -> 34 (8.5dBm) -> 20 (5dBm) -> 8 (2dBm) -> 78 (19.5dBm) -> 60 (15dBm) -> 40 (10dBm)
+            const int8_t powerSteps[] = {40, 34, 20, 8, 78, 60};
+            const int numSteps = sizeof(powerSteps) / sizeof(powerSteps[0]);
+            int curIdx = 0;
+            for (int i = 0; i < numSteps; i++) {
+                if (powerSteps[i] == currentTxPower) {
+                    curIdx = i;
+                    break;
+                }
+            }
+            currentTxPower = powerSteps[(curIdx + 1) % numSteps];
+            esp_wifi_set_max_tx_power(currentTxPower);
+            buttons.flashLed(0, 80, 80, 200);
+            LOG_INFO(">>> WiFi TX Power set to %d (%.2f dBm) <<<", currentTxPower, (float)currentTxPower * 0.25f);
+        }
+        else if (c == 'd')
+        {
+            serialDisplay.toggleEnabled();
+            LOG_INFO(">>> Serial Debug Output: %s <<<", serialDisplay.isEnabled() ? "ENABLED" : "MUTED");
+        }
+        else if (c == '?' || c == 'h')
+        {
+            serialDisplay.printHelp();
+        }
+        #endif
     }
 
     #if defined(ESP32)
@@ -394,15 +472,19 @@ void loop()
     ButtonEvent evt = buttons.update();
     if (evt == BTN_CENTER_CLICK) {
         headtracker.center();
-        buttons.setLed(0, 80, 80); // Cyan acknowledge
+        buttons.flashLed(0, 80, 80, 500); // Cyan acknowledge
+        LOG_INFO("[EVENT] HeadTracker Centered / Zeroed (BOOT Switch)");
     } else if (evt == BTN_CENTER_LONG) {
-        buttons.setLed(80, 80, 0); // Yellow calibrate
+        buttons.flashLed(80, 80, 0, 800); // Yellow calibrate
         headtracker.calibrate();
+        LOG_INFO("[EVENT] HeadTracker Calibrated / Tared (BOOT Switch)");
     } else if (evt == BTN_RIGHT_CLICK) {
         waveMode = !waveMode; // Toggle live HT vs Test Wave
         LOG_INFO("Mode switched: %s", waveMode ? "TEST WAVE" : "LIVE HEADTRACKER");
     } else if (evt == BTN_LEFT_CLICK) {
+        #if FEATURE_DISPLAY
         display.toggleDriver(); // Toggle ST7789 <-> GC9A01
+        #endif
     }
 
     headtracker.update();
@@ -452,12 +534,13 @@ void loop()
             }
 
             if (vrxModule.getLastSendSuccess()) {
-                buttons.setLed(0, 40, 0); // Green
+                buttons.setHeartbeatLed(0, 40, 0); // Green heartbeat
             } else {
-                buttons.setLed(40, 0, 0); // Red on send error
+                buttons.setHeartbeatLed(40, 0, 0); // Red on send error
             }
         }
 
+        #if FEATURE_DISPLAY
         // Display refresh (~20 Hz)
         if (now - lastDisplayTime >= 50) {
             lastDisplayTime = now;
@@ -476,6 +559,25 @@ void loop()
                 UID
             );
         }
+        #endif
+
+        // Serial Debug & ASCII Level Rendering
+        serialDisplay.render(
+            headtracker.getPan(),
+            headtracker.getTilt(),
+            headtracker.getRoll(),
+            headtracker.getCrsfPan(),
+            headtracker.getCrsfTilt(),
+            headtracker.getCrsfRoll(),
+            vrxModule.getPacketCount(),
+            vrxModule.getLastSendSuccess(),
+            rxPacketCount,
+            lastRxPacketTime,
+            headtracker.getSensorName(),
+            waveMode,
+            (uint8_t)radioMode,
+            currentTxPower
+        );
         #else
         vrxModule.updateChannelRamp();   // ESP-NOW senden
         #endif

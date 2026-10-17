@@ -38,7 +38,7 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
     // ================= RC CHANNELS =================
     if (buffer[2] == CRSF_FRAMETYPE_RC_CHANNELS)   // CRSF_FRAMETYPE_RC_CHANNELS
     {
-        LOG_INFO("RC Frame received (%d bytes)", len);
+        LOG_DEBUG("RC Frame received (%d bytes)", len);
         crsf.decodeRC();
         return;
     }
@@ -76,11 +76,11 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
             if (fabs(cur.lat - lastLat) > 0.000001f ||
                 fabs(cur.lon - lastLon) > 0.000001f)
             {
-                LOG_INFO("GPS: %.7f, %.7f alt=%d sats=%d",
-                         cur.lat,
-                         cur.lon,
-                         crsf.gps_altitude,
-                         crsf.gps_sats);
+                LOG_DEBUG("GPS: %.7f, %.7f alt=%d sats=%d",
+                          cur.lat,
+                          cur.lon,
+                          crsf.gps_altitude,
+                          crsf.gps_sats);
 
                 lastLat = cur.lat;
                 lastLon = cur.lon;
@@ -89,7 +89,7 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
             /* ---- GPS STATUS CHANGE ---- */
             if (gpsGood != prevGpsGood)
             {
-                LOG_INFO("GPS Status changed: gpsGood=%d", gpsGood);
+                LOG_DEBUG("GPS Status changed: gpsGood=%d", gpsGood);
                 prevGpsGood = gpsGood;
             }
 
@@ -111,7 +111,7 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
             // nur loggen, wenn sich Wert geändert hat
             if (fabs(climb_m_s - lastClimb) > 0.01f)
             {
-                LOG_INFO("VARIO: %+.2f m/s (%d cm/s)", climb_m_s, climb_cm);
+                LOG_DEBUG("VARIO: %+.2f m/s (%d cm/s)", climb_m_s, climb_cm);
                 lastClimb = climb_m_s;
             }
 
@@ -128,11 +128,11 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
 
             if (hud_bat1_volts != lastVolt)
             {
-                LOG_INFO("BAT: %.1fV %.1fA %u%% %lumAh",
-                         crsf.batF_voltage,
-                         crsf.batF_current,
-                         crsf.bat_remaining,
-                         (unsigned long)crsf.bat_fuel_drawn);
+                LOG_DEBUG("BAT: %.1fV %.1fA %u%% %lumAh",
+                          crsf.batF_voltage,
+                          crsf.batF_current,
+                          crsf.bat_remaining,
+                          (unsigned long)crsf.bat_fuel_drawn);
 
                 lastVolt = hud_bat1_volts;
             }
@@ -144,7 +144,7 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
         {
             // Rohwert aus CRSF-Klasse
             uint16_t alt_raw = crsf.baro_altitude;
-            LOG_INFO("BARO: raw=%u", alt_raw);
+            LOG_DEBUG("BARO: raw=%u", alt_raw);
 
         } break;
 
@@ -157,26 +157,26 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
 
             if (fabs(crsf.attiF_pitch - lastPitch) > 0.1f)
             {
-                LOG_INFO("ATT: p=%.1f r=%.1f y=%.1f",
-                         crsf.attiF_pitch,
-                         crsf.attiF_roll,
-                         crsf.attiF_yaw);
+                LOG_DEBUG("ATT: p=%.1f r=%.1f y=%.1f",
+                          crsf.attiF_pitch,
+                          crsf.attiF_roll,
+                          crsf.attiF_yaw);
 
                 lastPitch = crsf.attiF_pitch;
             }
 
         } break;
 
-                /* ================= LINK STATISTICS (0x14) ================= */
+        /* ================= LINK STATISTICS (0x14) ================= */
         case LINK_ID:   // 0x14
         {
-            LOG_INFO("LINK: RSSI1=%d RSSI2=%d Q=%d SNR=%d TX=%d RF=%d",
-                     crsf.link_up_rssi_ant_1,
-                     crsf.link_up_rssi_ant_2,
-                     crsf.link_up_quality,
-                     crsf.link_up_snr,
-                     crsf.link_up_tx_power,
-                     crsf.link_rf_mode);
+            LOG_DEBUG("LINK: RSSI1=%d RSSI2=%d Q=%d SNR=%d TX=%d RF=%d",
+                      crsf.link_up_rssi_ant_1,
+                      crsf.link_up_rssi_ant_2,
+                      crsf.link_up_quality,
+                      crsf.link_up_snr,
+                      crsf.link_up_tx_power,
+                      crsf.link_rf_mode);
         } break;
 
         /* ================= FLIGHT MODE ================= */
@@ -186,9 +186,9 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
 
             if (crsf.flightMode != lastMode)
             {
-                LOG_INFO("MODE: %s Armed:%d",
-                         crsf.flightMode.c_str(),
-                         motArmed);
+                LOG_DEBUG("MODE: %s Armed:%d",
+                          crsf.flightMode.c_str(),
+                          motArmed);
 
                 lastMode = crsf.flightMode;
             }
@@ -197,18 +197,7 @@ void processCRSFFrame(uint8_t* buffer, uint16_t len)
 
         default:
         {
-            LOG_INFO("Unknown CRSF ID: 0x%02X (len=%d)", crsf_id, len);
-
-            // komplettes Paket als HEX dump ausgeben
-            char hexString[512] = {0};
-            char* ptr = hexString;
-
-            for (uint16_t i = 0; i < len; i++)
-            {
-                ptr += sprintf(ptr, "%02X ", buffer[i]);
-            }
-
-            LOG_INFO("Frame Data: %s", hexString);
+            LOG_DEBUG("Unknown CRSF ID: 0x%02X (len=%d)", crsf_id, len);
         }
         break;
     }

@@ -19,8 +19,14 @@ public:
     void begin();
     ButtonEvent update();
 
-    // Set RGB LED color
+    // Set RGB LED color directly
     void setLed(uint8_t r, uint8_t g, uint8_t b);
+
+    // Flash RGB LED for a temporary duration (ms), protecting it from heartbeat overwrite
+    void flashLed(uint8_t r, uint8_t g, uint8_t b, uint32_t durationMs = 500);
+
+    // Set heartbeat LED (only updates if no temporary flash is currently active)
+    void setHeartbeatLed(uint8_t r, uint8_t g, uint8_t b);
 
 private:
     uint32_t _btnCenterPressStart;
@@ -29,4 +35,6 @@ private:
 
     bool     _btnRightWasDown;
     bool     _btnLeftWasDown;
+
+    uint32_t _flashUntil;
 };

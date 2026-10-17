@@ -1,6 +1,28 @@
 #include "display_manager.h"
 #include "logging.h"
 
+#if !FEATURE_DISPLAY
+
+DisplayManager::DisplayManager() : _driver(DRIVER_ST7789), _framebuffer(nullptr) {}
+bool DisplayManager::begin() { return false; }
+void DisplayManager::toggleDriver() {}
+const char* DisplayManager::getDriverName() const { return "NONE"; }
+void DisplayManager::clear(uint16_t color) {}
+void DisplayManager::drawPixel(int16_t x, int16_t y, uint16_t color) {}
+void DisplayManager::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {}
+void DisplayManager::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {}
+void DisplayManager::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {}
+void DisplayManager::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {}
+void DisplayManager::drawChar(int16_t x, int16_t y, char c, uint16_t color, uint16_t bg, uint8_t size) {}
+void DisplayManager::drawString(int16_t x, int16_t y, const char* str, uint16_t color, uint16_t bg, uint8_t size) {}
+void DisplayManager::renderUI(float pan, float tilt, float roll,
+                              uint16_t crsfPan, uint16_t crsfTilt, uint16_t crsfRoll,
+                              uint32_t txCount, bool txOk, uint32_t rxCount, uint32_t lastRxTime,
+                              const char* imuName, const uint8_t* uid) {}
+void DisplayManager::flush() {}
+
+#else
+
 // Basic 5x7 ASCII font data
 static const uint8_t font5x7[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, // (space)
@@ -499,3 +521,5 @@ void DisplayManager::renderUI(float pan, float tilt, float roll,
     // Push to LCD
     flush();
 }
+
+#endif
