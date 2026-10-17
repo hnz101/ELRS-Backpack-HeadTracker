@@ -66,27 +66,31 @@ private:
     uint8_t  _bnoAddress;
     uint8_t  _fusionMode;
 
-    // Runtime orientation options
+    //Runtime orientation options
     bool     _swapPitchRoll;
     bool     _invertPan;
     bool     _invertTilt;
     bool     _invertRoll;
 
     uint32_t _lastUpdateMicros;
+    uint32_t _lastPollMicros;
 
-    // 3D Quaternions for cross-talk free relative orientation
+    // 3D Quaternions for gravity-aligned, cross-talk free relative orientation:
+    // q_rel = _zeroYawInv * _currentQuat * _zeroTiltInv
     Quat     _currentQuat;
     Quat     _zeroQuat;
+    Quat     _zeroYawInv;
+    Quat     _zeroTiltInv;
 
-    // Absolute orientation (degrees)
+    // Async tare / mode-switch centering state
+    bool     _pendingCenter;
+    uint8_t  _pendingSkipSamples;
+    bool     _anglesDirty;
+
+    // Absolute orientation (degrees, world frame)
     float _pitch;
     float _roll;
     float _yaw;
-
-    // Zero / Center reference for QMI fallback
-    float _zeroPitch;
-    float _zeroRoll;
-    float _zeroYaw;
 
     // Relative angles (head frame)
     float _relPan;
@@ -105,8 +109,15 @@ private:
 
     uint16_t angleToCrsf(float angle, float maxAngle, bool invert);
     void applyFusionMode();
+    void recomputeAngles();
+    uint8_t getActiveReportId() const;
 
+    void loadSettings();
+    void saveSettings();
+
+    static Quat quatNormalize(const Quat& q);
     static Quat quatMultiply(const Quat& q1, const Quat& q2);
     static Quat quatInverse(const Quat& q);
+    static Quat eulerToQuat(float yawDeg, float pitchDeg, float rollDeg);
     static void quatToEuler(const Quat& q, float &yaw, float &pitch, float &roll);
 };

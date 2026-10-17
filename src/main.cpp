@@ -35,6 +35,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_now.h>
+#include <Preferences.h>
 #else
 #include <ESP8266WiFi.h>
 #include <espnow.h>
@@ -91,11 +92,6 @@ uint8_t UID[6] = {106,19,19,206,193,30};
 // ======================================================
 RadioMode radioMode = MODE_BOTH;   // Default startup mode
 
-// Time window (in milliseconds) after boot during which
-// the RadioMode can be changed via Serial commands.
-// After this time, the mode becomes fixed.
-const unsigned long CONFIG_WINDOW_MS = 5000;  // 5 seconds
-
 // ===== AP Wifi Config =====
 const char* ssid = "Backpack_ELRS_Crsf";           // SSID des Access Points
 const char* password = "12345678";                  // Passwort des Access Points
@@ -113,7 +109,6 @@ float wavePhase = 0.0;
 // 4. Global Objects
 // ======================================================
 
-unsigned long configWindowStart = 0;
 uint16_t rampChannels[NUM_CHANNELS];
 uint32_t lastStepTime = 0;
 uint8_t activeChannel = 0;
@@ -258,6 +253,16 @@ void initWiFi()
     UID[0] &= ~0x01;   // unicast fix
     
     #if defined(ESP32)
+        Preferences prefs;
+        if (prefs.begin("elrs_ht", false)) {
+            if (prefs.getChar("def_txp", -1) == (int8_t)WIFI_TX_POWER_DEFAULT) {
+                currentTxPower = prefs.getChar("tx_pwr", WIFI_TX_POWER_DEFAULT);
+            } else {
+                prefs.putChar("def_txp", (int8_t)WIFI_TX_POWER_DEFAULT);
+                prefs.putChar("tx_pwr", (int8_t)WIFI_TX_POWER_DEFAULT);
+            }
+            prefs.end();
+        }
         WiFi.disconnect();
         WiFi.mode(WIFI_STA); 
         // DAS IST PFLICHT FÜR DEN RAW-FRAME:
@@ -338,14 +343,11 @@ void initInfo()
     LOG_INFO("          Receiving/decoding is disabled.");
     LOG_INFO("BOTH    : Full bidirectional operation.");
     LOG_INFO("--------------------------------------------------");
-    LOG_INFO("Config window active for %lu ms", CONFIG_WINDOW_MS);
-    LOG_INFO("Change mode via Serial during this window:");
+    LOG_INFO("Change mode anytime via Serial:");
     LOG_INFO("  1 = RX_ONLY");
     LOG_INFO("  2 = TX_ONLY");
     LOG_INFO("  3 = BOTH");
     LOG_INFO("==================================================");
-
-    configWindowStart = millis();
 }
 
 void setup() {
@@ -450,8 +452,14 @@ void loop()
             }
             currentTxPower = powerSteps[(curIdx + 1) % numSteps];
             esp_wifi_set_max_tx_power(currentTxPower);
+            Preferences prefs;
+            if (prefs.begin("elrs_ht", false)) {
+                prefs.putChar("def_txp", (int8_t)WIFI_TX_POWER_DEFAULT);
+                prefs.putChar("tx_pwr", currentTxPower);
+                prefs.end();
+            }
             buttons.flashLed(0, 80, 80, 200);
-            LOG_INFO(">>> WiFi TX Power set to %d (%.2f dBm) <<<", currentTxPower, (float)currentTxPower * 0.25f);
+            LOG_INFO(">>> WiFi TX Power set to %d (%.2f dBm) [saved to NVS] <<<", currentTxPower, (float)currentTxPower * 0.25f);
         }
         else if (c == 'd')
         {

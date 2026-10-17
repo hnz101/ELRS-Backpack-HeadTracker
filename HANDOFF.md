@@ -104,10 +104,11 @@ The firmware features an intelligent LED priority engine (`ButtonManager`):
 // 2 = 6-DOF GAME ROTATION VECTOR (Accel + Gyro only, immune to speaker magnets, but yaw will drift)
 #define BNO085_FUSION_MODE 0
 
-// 3. Axis Inversion (Tilt and Yaw inverted per user preference)
+// 3. Axis Inversion & 90-Degree Mounting Swap
 #define HT_INVERT_PAN       true   // Inverted (Yaw)
-#define HT_INVERT_TILT      false  // Inverted per user request (false = non-inverted)
-#define HT_INVERT_ROLL      false  // Non-inverted (Roll)
+#define HT_INVERT_TILT      false  // Non-inverted (Pitch)
+#define HT_INVERT_ROLL      true   // Inverted (Roll)
+#define HT_SWAP_PITCH_ROLL  true   // Swapped (Sensor mounted rotated by 90 degrees)
 
 // 4. EdgeTX Trainer Channel Mapping (0-indexed: 0=TR1, 1=TR2, 2=TR3)
 #define HT_CH_PAN           0   // TR1 = Pan
@@ -156,46 +157,43 @@ To monitor Serial output and interact with the ASCII level meters:
 
 ---
 
-## 8. Edge Cases, Technical Findings & Troubleshooting
+## 8. 9-DOF Sensor Calculations & Technical Architecture
 
-### 1. BNO085 SparkFun Library INT Pin Hang Bug
+### 1. BNO085 SparkFun Library INT Pin Hang Bug & Watchdog Recovery
 * **Symptom:** ESP32-C3 hangs or enters an infinite reset loop on boot when the BNO085 is connected.
 * **Root Cause:** When `intPin` is passed to `_bno.begin(addr, Wire, intPin, -1)`, the underlying SparkFun library executes `hal_wait_for_int()`. If INT is high during startup transactions, it hits a 500ms timeout and triggers `hal_hardwareReset()`, restarting the handshake forever.
-* **Solution:** Pass `-1, -1` to `_bno.begin()` in [`src/headtracker.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/headtracker.cpp) for pure, non-blocking I2C polling. Pin 7 (RST) is held LOW on boot for 50ms and released with a 300ms stabilization delay before I2C initialization. Pin 6 (INT) has an internal pull-up enabled to prevent floating.
+* **Solution:** Pass `-1, -1` to `_bno.begin()` in [`src/headtracker.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/headtracker.cpp). Pin 7 (RST) is held LOW on boot for 50ms and released with a 300ms stabilization delay before I2C initialization. Pin 6 (INT) has its internal pull-up enabled (`INPUT_PULLUP`) and is used as an active-LOW fast readiness check alongside a 500 Hz non-blocking poll timer. Additionally, `_bno.wasReset()` is monitored in `update()` to automatically re-enable sensor reports if the BNO085 ever experiences an internal reset.
 
-### 2. Pitch / Roll Cross-Talk Elimination (3D Relative Quaternions)
-* **Symptom:** Pitch bleeds into roll (and vice-versa) when turning the head (yaw).
-* **Root Cause:** Subtracting world Euler angles ($Euler_{\text{current}} - Euler_{\text{zero}}$) fails because rotation axes are interdependent in 3D Euclidean space.
-* **Solution:** Implement true 3D relative quaternion orientation:
-  $$q_{\text{relative}} = q_{\text{zero}}^{-1} \otimes q_{\text{current}}$$
-  Euler angles (Pan/Tilt/Roll) are computed from $q_{\text{relative}}$ in local head coordinates. This guarantees $0\%$ axis cross-bleed regardless of starting position or orientation.
+### 2. Gravity-Aligned 3D Relative Quaternions (Zero Cross-Talk on Sloped Goggles)
+* **Symptom:** Pitch bleeds into roll (and vice-versa) when turning the head (yaw), especially when the IMU PCB is mounted at an angle on curved FPV goggles.
+* **Root Cause:**
+  1. Subtracting world Euler angles ($\text{Euler}_{\text{current}} - \text{Euler}_{\text{zero}}$) fails because rotation axes are coupled in 3D space.
+  2. Naive body-frame quaternion zeroing ($q_{\text{zero}}^{-1} \otimes q_{\text{current}}$) zeroes inside the tilted PCB frame. If the PCB is mounted at a $25^\circ$ pitch on curved goggles, horizontal head turns around the vertical neck axis (World Gravity $+Z$) bleed $\sin(25^\circ) \approx 42\%$ into Roll and Tilt.
+* **Solution:** When `center()` is triggered, the reference orientation $q_0$ is factored into:
+  1. **World-Z Azimuth Heading** $q_{\text{yaw},0} = (\cos(\psi_0/2), 0, 0, \sin(\psi_0/2))$ around true Gravity Up ($+Z$).
+  2. **Local Goggle Mounting Tilt/Roll** $q_{\text{tilt},0} = q_{\text{yaw},0}^{-1} \otimes q_0$.
 
-### 3. Yaw Drift vs. Magnetometer Environment (9-DOF vs 6-DOF)
-* **9-DOF Rotation Vector (`BNO085_FUSION_MODE 0`):**
-  - Fuses Accelerometer + Gyroscope + Magnetometer.
-  - Locked to magnetic North: **zero long-term yaw drift**.
-  - The BNO085 executes background Dynamic Calibration (DCD). Normal head movements automatically calibrate the magnetometer.
-  - *Edge Case:* If moved into an environment with heavy ferromagnetic distortion (e.g., inside a car or adjacent to large speakers), simply tap the BOOT switch (or press `'c'` in serial) to zero the forward reference.
-* **6-DOF Game Rotation Vector (`BNO085_FUSION_MODE 2`):**
-  - Uses only Accelerometer + Gyroscope.
-  - $100\%$ immune to headphone/speaker magnets, but Yaw will slowly drift ($1^\circ\text{--}3^\circ/\text{min}$).
-  - *Tip:* Press **`'f'`** in the serial monitor to cycle fusion modes on the fly.
+  On every update, the 3D relative head orientation is computed as:
+  $$q_{\text{rel}} = q_{\text{yaw},0}^{-1} \otimes q_{\text{current}} \otimes q_{\text{tilt},0}^{-1}$$
+  - Left-multiplying by $q_{\text{yaw},0}^{-1}$ zeroes horizontal heading around **true World Gravity Up**.
+  - Right-multiplying by $q_{\text{tilt},0}^{-1}$ removes the physical mounting slope of the sensor on the goggles.
+  - If `HT_SWAP_PITCH_ROLL` (`'s'`) is enabled for $90^\circ$ rotated mounting, an $\text{SO}(3)$ similarity transform $(w, x, y, z) \mapsto (w, -y, x, z)$ is applied **before** Intrinsic $Z\text{-}Y'\text{-}X''$ (`Pan -> Tilt -> Roll`) Euler extraction so the decomposition order always matches the physical camera gimbal.
 
-### 4. Board Heating & WiFi Transmission Power
-* **Symptom:** The ESP32-C3 feels hot during operation.
-* **Root Cause:** The ESP-NOW link sends raw 802.11b frames at 50 Hz. Hardcoded $+19.5\text{ dBm}$ (78 units, $\approx 90\text{ mW}$) draws 300mA current spikes, heating the small PCB.
-* **Solution:** Set `WIFI_TX_POWER_DEFAULT` to `40` ($10.0\text{ dBm} = 10\text{ mW}$) in `my_config.h`. This reduces RF heating by $\approx 89\%$ while maintaining 20+ meters line-of-sight range (head-to-radio is only 1–2m). Press **`'t'`** in the serial monitor to cycle TX power live.
+### 3. Single-Stream Fusion Mode Switching & Asynchronous Tare
+* **9-DOF Rotation Vector (`BNO085_FUSION_MODE 0`):** Fuses Accelerometer + Gyroscope + Magnetometer in the ENU frame with background Dynamic Calibration (DCD) for **zero long-term yaw drift**.
+* **9-DOF AR/VR Stabilized (`BNO085_FUSION_MODE 1`):** Headset-tuned 9-DOF fusion that suppresses micro-jitter and magnetic swimming during slow/stationary viewing.
+* **6-DOF Game Rotation Vector (`BNO085_FUSION_MODE 2`):** Uses only Accelerometer + Gyroscope ($100\%$ immune to speaker/fan magnets, with $\sim 1^\circ\text{--}3^\circ/\text{min}$ yaw drift).
+* **Clean Report Switching & Async Tare:** Switching modes via `'f'` explicitly disables inactive SH-2 report IDs (`interval = 0`) and filters incoming packets by the active report ID so 9-DOF and 6-DOF frames never collide. Both `'f'` and `'r'` (hardware tare) use a deferred `_pendingCenter` latch that waits for fresh post-tare/post-switch quaternion samples before locking $q_0$.
 
-### 5. Telemetry Spam Causing Terminal Flickering
-* **Symptom:** Periodic `[INF] LINK: RSSI1=...` logs break the ASCII dashboard lines.
-* **Solution:** Demoted high-frequency telemetry logs (`LINK`, `VARIO`, `BAT`, `RC Frame`) to `LOG_DEBUG` in [`src/application.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/application.cpp). Only actionable user events (`[EVENT] HeadTracker Centered`) print at `LOG_INFO`.
+### 4. Non-Volatile Settings Persistence (NVS)
+* Runtime adjustments made via Serial commands (`'f'` fusion mode, `'p'`/`'y'`/`'o'` axis inversions, `'s'` $90^\circ$ pitch/roll swap, and `'t'` WiFi TX power) are automatically saved to ESP32 NVS (`Preferences`) and restored on boot.
+* A compile-time signature of [`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h) defaults is stored alongside NVS values so editing `my_config.h` and reflashing automatically updates the stored defaults.
 
-### 6. ESP-NOW Anti-Replay Duplicate Filter
-* **Symptom:** EdgeTX / ELRS backpack drops head tracking packets after a few seconds.
-* **Root Cause:** ExpressLRS backpack ignores packets if sequence/magic bytes are static (anti-replay filter).
-* **Solution:** [`src/fake_vrx_fake_trainer.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/fake_vrx_fake_trainer.cpp) injects dynamic 4-byte random salt (`esp_random()`) and transmits using `esp_wifi_80211_tx(..., false)` so WiFi hardware does not overwrite custom sequence numbers.
+### 5. Board Heating & WiFi Transmission Power
+* **Symptom:** The ESP32-C3 feels hot during operation at max TX power ($+19.5\text{ dBm} \approx 89\text{ mW}$).
+* **Solution:** `WIFI_TX_POWER_DEFAULT` is set to `40` ($10.0\text{ dBm} = 10\text{ mW}$) in `my_config.h`, reducing RF dissipation by $\approx 89\%$ while maintaining 20+ meters line-of-sight range. Press **`'t'`** in the serial monitor to cycle TX power live (persisted to NVS).
 
-### 7. Dual-Board Architecture & Backwards Compatibility
-* Target board selection is fully automated in `platformio.ini` and `src/my_config.h`:
-  - `esp32c3`: Waveshare ESP32-C3, external BNO085, native USB CDC, ASCII level meters, `FEATURE_DISPLAY = 0`.
-  - `lolin_s3_mini_pro`: WEMOS LOLIN S3 Mini Pro, onboard QMI8658, 0.85" SPI LCD, `FEATURE_DISPLAY = 1`.
+### 6. Telemetry Spam & Anti-Replay Filter
+* High-frequency telemetry logs (`LINK`, `VARIO`, `BAT`, `RC Frame`) are set to `LOG_DEBUG` in [`src/application.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/application.cpp) to keep the Serial ASCII dashboard clean.
+* [`src/fake_vrx_fake_trainer.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/fake_vrx_fake_trainer.cpp) injects dynamic 4-byte random salt (`esp_random()`) and transmits via `esp_wifi_80211_tx(..., false)` to satisfy the ExpressLRS backpack anti-replay filter.
+

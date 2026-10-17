@@ -1,6 +1,17 @@
 #include "headtracker.h"
 #include "logging.h"
 #include <math.h>
+#if defined(ESP32)
+#include <Preferences.h>
+#endif
+
+static constexpr uint32_t HT_PREFS_SIGNATURE =
+    0x48543031UL ^
+    ((uint32_t)(BNO085_FUSION_MODE & 0x0F)) ^
+    ((uint32_t)(HT_INVERT_PAN ? 1 : 0) << 4) ^
+    ((uint32_t)(HT_INVERT_TILT ? 1 : 0) << 5) ^
+    ((uint32_t)(HT_INVERT_ROLL ? 1 : 0) << 6) ^
+    ((uint32_t)(HT_SWAP_PITCH_ROLL ? 1 : 0) << 7);
 
 HeadTracker::HeadTracker()
     : _usingBno(false), _bnoAddress(0), _fusionMode(BNO085_FUSION_MODE),
@@ -9,8 +20,11 @@ HeadTracker::HeadTracker()
       _invertTilt(HT_INVERT_TILT),
       _invertRoll(HT_INVERT_ROLL),
       _lastUpdateMicros(0),
+      _lastPollMicros(0),
+      _pendingCenter(false),
+      _pendingSkipSamples(0),
+      _anglesDirty(true),
       _pitch(0), _roll(0), _yaw(0),
-      _zeroPitch(0), _zeroRoll(0), _zeroYaw(0),
       _relPan(0), _relTilt(0), _relRoll(0),
       _finalPan(0), _finalTilt(0), _finalRoll(0),
       _crsfPan(CRSF_CHANNEL_CENTER),
@@ -19,6 +33,59 @@ HeadTracker::HeadTracker()
 {
     _currentQuat = {1.0f, 0.0f, 0.0f, 0.0f};
     _zeroQuat    = {1.0f, 0.0f, 0.0f, 0.0f};
+    _zeroYawInv  = {1.0f, 0.0f, 0.0f, 0.0f};
+    _zeroTiltInv = {1.0f, 0.0f, 0.0f, 0.0f};
+}
+
+void HeadTracker::loadSettings()
+{
+#if defined(ESP32)
+    Preferences prefs;
+    if (prefs.begin("elrs_ht", false)) {
+        uint32_t sig = prefs.getUInt("def_sig", 0);
+        if (sig == HT_PREFS_SIGNATURE) {
+            _fusionMode    = prefs.getUChar("fusion", _fusionMode) % 3;
+            _invertPan     = prefs.getBool("inv_pan", _invertPan);
+            _invertTilt    = prefs.getBool("inv_tilt", _invertTilt);
+            _invertRoll    = prefs.getBool("inv_roll", _invertRoll);
+            _swapPitchRoll = prefs.getBool("swap_pr", _swapPitchRoll);
+        } else {
+            prefs.putUInt("def_sig", HT_PREFS_SIGNATURE);
+            prefs.putUChar("fusion", _fusionMode);
+            prefs.putBool("inv_pan", _invertPan);
+            prefs.putBool("inv_tilt", _invertTilt);
+            prefs.putBool("inv_roll", _invertRoll);
+            prefs.putBool("swap_pr", _swapPitchRoll);
+        }
+        prefs.end();
+    }
+#endif
+}
+
+void HeadTracker::saveSettings()
+{
+#if defined(ESP32)
+    Preferences prefs;
+    if (prefs.begin("elrs_ht", false)) {
+        prefs.putUInt("def_sig", HT_PREFS_SIGNATURE);
+        prefs.putUChar("fusion", _fusionMode);
+        prefs.putBool("inv_pan", _invertPan);
+        prefs.putBool("inv_tilt", _invertTilt);
+        prefs.putBool("inv_roll", _invertRoll);
+        prefs.putBool("swap_pr", _swapPitchRoll);
+        prefs.end();
+    }
+#endif
+}
+
+Quat HeadTracker::quatNormalize(const Quat& q)
+{
+    float norm = sqrtf(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    if (norm < 1e-6f) {
+        return {1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    float invNorm = 1.0f / norm;
+    return {q.w * invNorm, q.x * invNorm, q.y * invNorm, q.z * invNorm};
 }
 
 Quat HeadTracker::quatMultiply(const Quat& q1, const Quat& q2)
@@ -41,27 +108,47 @@ Quat HeadTracker::quatInverse(const Quat& q)
     return inv;
 }
 
+Quat HeadTracker::eulerToQuat(float yawDeg, float pitchDeg, float rollDeg)
+{
+    float halfYaw   = (yawDeg   * (M_PI / 180.0f)) * 0.5f;
+    float halfPitch = (pitchDeg * (M_PI / 180.0f)) * 0.5f;
+    float halfRoll  = (rollDeg  * (M_PI / 180.0f)) * 0.5f;
+
+    float cy = cosf(halfYaw);
+    float sy = sinf(halfYaw);
+    float cp = cosf(halfPitch);
+    float sp = sinf(halfPitch);
+    float cr = cosf(halfRoll);
+    float sr = sinf(halfRoll);
+
+    Quat q;
+    q.w = cr * cp * cy + sr * sp * sy;
+    q.x = sr * cp * cy - cr * sp * sy;
+    q.y = cr * sp * cy + sr * cp * sy;
+    q.z = cr * cp * sy - sr * sp * cy;
+    return quatNormalize(q);
+}
+
 void HeadTracker::quatToEuler(const Quat& q, float &yaw, float &pitch, float &roll)
 {
-    float norm = sqrtf(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
-    if (norm < 1e-6f) return;
-    float qw = q.w / norm;
-    float qx = q.x / norm;
-    float qy = q.y / norm;
-    float qz = q.z / norm;
+    Quat nq = quatNormalize(q);
+    float qw = nq.w;
+    float qx = nq.x;
+    float qy = nq.y;
+    float qz = nq.z;
 
-    // Roll (rotation around X-axis):
+    // Roll (intrinsic X''-axis rotation):
     float t0 = +2.0f * (qw * qx + qy * qz);
     float t1 = +1.0f - 2.0f * (qx * qx + qy * qy);
     roll = atan2f(t0, t1) * (180.0f / M_PI);
 
-    // Pitch (rotation around Y-axis):
+    // Pitch (intrinsic Y'-axis rotation):
     float t2 = +2.0f * (qw * qy - qz * qx);
     if (t2 > 1.0f) t2 = 1.0f;
     if (t2 < -1.0f) t2 = -1.0f;
     pitch = asinf(t2) * (180.0f / M_PI);
 
-    // Yaw (rotation around Z-axis):
+    // Yaw (intrinsic Z-axis rotation):
     float t3 = +2.0f * (qw * qz + qx * qy);
     float t4 = +1.0f - 2.0f * (qy * qy + qz * qz);
     yaw = atan2f(t3, t4) * (180.0f / M_PI);
@@ -70,30 +157,54 @@ void HeadTracker::quatToEuler(const Quat& q, float &yaw, float &pitch, float &ro
 void HeadTracker::toggleInvertTilt()
 {
     _invertTilt = !_invertTilt;
+    _anglesDirty = true;
+    saveSettings();
+    recomputeAngles();
     LOG_INFO("Pitch Inversion: %s", _invertTilt ? "INVERTED" : "NORMAL");
 }
 
 void HeadTracker::toggleInvertPan()
 {
     _invertPan = !_invertPan;
+    _anglesDirty = true;
+    saveSettings();
+    recomputeAngles();
     LOG_INFO("Pan/Yaw Inversion: %s", _invertPan ? "INVERTED" : "NORMAL");
 }
 
 void HeadTracker::toggleInvertRoll()
 {
     _invertRoll = !_invertRoll;
+    _anglesDirty = true;
+    saveSettings();
+    recomputeAngles();
     LOG_INFO("Roll Inversion: %s", _invertRoll ? "INVERTED" : "NORMAL");
 }
 
 void HeadTracker::toggleSwapPitchRoll()
 {
     _swapPitchRoll = !_swapPitchRoll;
+    _anglesDirty = true;
+    saveSettings();
+    recomputeAngles();
     LOG_INFO("Pitch/Roll Swap: %s", _swapPitchRoll ? "SWAPPED (90 deg)" : "NORMAL");
+}
+
+uint8_t HeadTracker::getActiveReportId() const
+{
+    if (_fusionMode == 0) return SH2_ROTATION_VECTOR;
+    if (_fusionMode == 1) return SH2_ARVR_STABILIZED_RV;
+    return SH2_GAME_ROTATION_VECTOR;
 }
 
 void HeadTracker::applyFusionMode()
 {
     if (!_usingBno) return;
+
+    // Disable inactive rotation vector reports first so multiple streams never collide
+    if (_fusionMode != 0) _bno.enableReport(SH2_ROTATION_VECTOR, 0);
+    if (_fusionMode != 1) _bno.enableReport(SENSOR_REPORTID_AR_VR_STABILIZED_ROTATION_VECTOR, 0);
+    if (_fusionMode != 2) _bno.enableReport(SH2_GAME_ROTATION_VECTOR, 0);
 
     if (_fusionMode == 0) {
         LOG_INFO("Configuring BNO085: 9-DOF ROTATION VECTOR (Mag + Gyro + Accel -> ZERO YAW DRIFT)");
@@ -110,13 +221,22 @@ void HeadTracker::applyFusionMode()
 void HeadTracker::setFusionMode(uint8_t mode)
 {
     _fusionMode = mode % 3;
+    saveSettings();
     applyFusionMode();
-    center();
+    // Defer centering until the new fusion report delivers a fresh quaternion
+    _pendingCenter = true;
+    _pendingSkipSamples = 2;
 }
 
 bool HeadTracker::begin()
 {
+    loadSettings();
     LOG_INFO("Initializing HeadTracker IMU...");
+
+    // Configure optional INT pin with internal pull-up to prevent floating
+    if (PIN_BNO_INT >= 0) {
+        pinMode(PIN_BNO_INT, INPUT_PULLUP);
+    }
 
     // 1. Hardware Reset BNO085 if RST pin is configured
     if (PIN_BNO_RST >= 0) {
@@ -125,9 +245,9 @@ bool HeadTracker::begin()
         digitalWrite(PIN_BNO_RST, HIGH);
         delay(10);
         digitalWrite(PIN_BNO_RST, LOW);
-        delay(20);
+        delay(50);
         digitalWrite(PIN_BNO_RST, HIGH);
-        delay(300); // Critical: give BNO085 ARM Cortex-M0 time to boot firmware
+        delay(300); // Critical: give BNO085 ARM Cortex-M0+ time to boot firmware
     }
 
     // 2. Initialize I2C Bus
@@ -181,6 +301,7 @@ bool HeadTracker::begin()
 
         // Fetch initial readings
         for (int i = 0; i < 25; i++) {
+            _lastPollMicros = 0; // Force poll during startup warmup
             update();
             delay(5);
         }
@@ -201,9 +322,12 @@ bool HeadTracker::begin()
             float ax = _qmi.getAccelX();
             float ay = _qmi.getAccelY();
             float az = _qmi.getAccelZ();
-            _pitch = atan2f(-ax, -az) * (180.0f / M_PI);
-            _roll  = atan2f(ay, -az) * (180.0f / M_PI);
+            float nz = -az;
+            float signNz = (nz >= 0.0f) ? 1.0f : -1.0f;
+            _pitch = atan2f(-ax, signNz * sqrtf(ay * ay + nz * nz)) * (180.0f / M_PI);
+            _roll  = atan2f(ay, nz) * (180.0f / M_PI);
             _yaw   = 0.0f;
+            _currentQuat = eulerToQuat(_yaw, _pitch, _roll);
         }
 
         center();
@@ -218,16 +342,30 @@ bool HeadTracker::begin()
 
 void HeadTracker::center()
 {
-    if (_usingBno) {
-        // Lock zero quaternion to current absolute 3D orientation
-        _zeroQuat = _currentQuat;
-        LOG_INFO("HeadTracker Centered via 3D Quaternion transformation!");
-    } else {
-        _zeroPitch = _pitch;
-        _zeroRoll  = _roll;
-        _zeroYaw   = _yaw;
-        LOG_INFO("HeadTracker Centered: Zero Yaw=%.1f deg, Pitch=%.1f deg, Roll=%.1f deg", _zeroYaw, _zeroPitch, _zeroRoll);
-    }
+    // Factor current orientation q0 into:
+    //   1. Pure World-Z azimuth rotation q_yaw0 (aligned with true gravity up)
+    //   2. Sensor/goggle mounting pitch & roll offset q_tilt0 = q_yaw0^(-1) * q0
+    // This ensures horizontal head pan rotates strictly around World Gravity Up
+    // with zero Roll/Tilt bleed even when the sensor is mounted at an angle on curved goggles.
+    _zeroQuat = quatNormalize(_currentQuat);
+
+    float t3 = +2.0f * (_zeroQuat.w * _zeroQuat.z + _zeroQuat.x * _zeroQuat.y);
+    float t4 = +1.0f - 2.0f * (_zeroQuat.y * _zeroQuat.y + _zeroQuat.z * _zeroQuat.z);
+    float yaw0Rad = atan2f(t3, t4);
+
+    float halfYaw0 = yaw0Rad * 0.5f;
+    Quat qYaw0 = {cosf(halfYaw0), 0.0f, 0.0f, sinf(halfYaw0)};
+    _zeroYawInv = quatInverse(qYaw0);
+
+    Quat qTilt0 = quatNormalize(quatMultiply(_zeroYawInv, _zeroQuat));
+    _zeroTiltInv = quatInverse(qTilt0);
+
+    _pendingCenter = false;
+    _pendingSkipSamples = 0;
+    _anglesDirty = true;
+    recomputeAngles();
+
+    LOG_INFO("HeadTracker Centered (Gravity-Aligned 3D Quaternion: Yaw0=%.1f deg)", yaw0Rad * (180.0f / M_PI));
 }
 
 void HeadTracker::calibrate()
@@ -239,17 +377,22 @@ void HeadTracker::calibrate()
         } else {
             _bno.tareNow(true, SH2_TARE_BASIS_GAMING_ROTATION_VECTOR);
         }
-        center();
+        // Wait for fresh post-tare quaternion report before latching _zeroQuat
+        _pendingCenter = true;
+        _pendingSkipSamples = 2;
     } else if (_qmi.isConnected()) {
         _qmi.calibrateGyro(150);
         if (_qmi.update()) {
             float ax = _qmi.getAccelX();
             float ay = _qmi.getAccelY();
             float az = _qmi.getAccelZ();
-            _pitch = atan2f(-ax, -az) * (180.0f / M_PI);
-            _roll  = atan2f(ay, -az) * (180.0f / M_PI);
+            float nz = -az;
+            float signNz = (nz >= 0.0f) ? 1.0f : -1.0f;
+            _pitch = atan2f(-ax, signNz * sqrtf(ay * ay + nz * nz)) * (180.0f / M_PI);
+            _roll  = atan2f(ay, nz) * (180.0f / M_PI);
         }
-        _yaw = 0;
+        _yaw = 0.0f;
+        _currentQuat = eulerToQuat(_yaw, _pitch, _roll);
         center();
     }
 }
@@ -278,14 +421,61 @@ uint16_t HeadTracker::angleToCrsf(float angle, float maxAngle, bool invert)
     if (angle > maxAngle)  angle = maxAngle;
     if (angle < -maxAngle) angle = -maxAngle;
 
-    // Map -maxAngle..+maxAngle to CRSF_CHANNEL_MIN..CRSF_CHANNEL_MAX
+    // Map -maxAngle..+maxAngle symmetrically to CRSF_CHANNEL_MIN..CRSF_CHANNEL_CENTER..CRSF_CHANNEL_MAX
     float normalized = angle / maxAngle; // -1.0 .. +1.0
-    int32_t crsf = (int32_t)(CRSF_CHANNEL_CENTER + normalized * (CRSF_CHANNEL_MAX - CRSF_CHANNEL_CENTER));
+    float span = (normalized >= 0.0f)
+        ? (float)(CRSF_CHANNEL_MAX - CRSF_CHANNEL_CENTER)
+        : (float)(CRSF_CHANNEL_CENTER - CRSF_CHANNEL_MIN);
+    int32_t crsf = (int32_t)lroundf((float)CRSF_CHANNEL_CENTER + normalized * span);
 
     if (crsf < CRSF_CHANNEL_MIN) crsf = CRSF_CHANNEL_MIN;
     if (crsf > CRSF_CHANNEL_MAX) crsf = CRSF_CHANNEL_MAX;
 
     return (uint16_t)crsf;
+}
+
+void HeadTracker::recomputeAngles()
+{
+    // Gravity-aligned 3D relative rotation:
+    //   q_rel = q_yaw0^(-1) * q_current * q_tilt0^(-1)
+    // Left-multiplying by q_yaw0^(-1) zeroes azimuth around true World Gravity Up (+Z),
+    // while right-multiplying by q_tilt0^(-1) removes the sensor's mounting tilt/roll on the goggles.
+    Quat qTemp = quatMultiply(_zeroYawInv, _currentQuat);
+    Quat qRel  = quatMultiply(qTemp, _zeroTiltInv);
+
+    // If sensor is mounted rotated 90 degrees around Z, perform SO(3) similarity transform
+    // in quaternion space BEFORE Z-Y'-X'' Euler decomposition so gimbal order (Pan -> Tilt -> Roll)
+    // stays physically aligned with the head axes.
+    if (_swapPitchRoll) {
+        Quat qSwapped = {qRel.w, -qRel.y, qRel.x, qRel.z};
+        quatToEuler(qSwapped, _relPan, _relTilt, _relRoll);
+        _relRoll = -_relRoll;
+    } else {
+        quatToEuler(qRel, _relPan, _relTilt, _relRoll);
+    }
+
+    // Keep absolute world orientation for diagnostics
+    quatToEuler(_currentQuat, _yaw, _pitch, _roll);
+
+    float pan  = _relPan;
+    float tilt = _relTilt;
+    float roll = _relRoll;
+
+    // Apply axis inversions
+    if (_invertPan)  pan  = -pan;
+    if (_invertTilt) tilt = -tilt;
+    if (_invertRoll) roll = -roll;
+
+    _finalPan  = pan;
+    _finalTilt = tilt;
+    _finalRoll = roll;
+
+    // Convert relative angles to CRSF values
+    _crsfPan  = angleToCrsf(_finalPan,  HT_MAX_ANGLE_PAN,  false);
+    _crsfTilt = angleToCrsf(_finalTilt, HT_MAX_ANGLE_TILT, false);
+    _crsfRoll = angleToCrsf(_finalRoll, HT_MAX_ANGLE_ROLL, false);
+
+    _anglesDirty = false;
 }
 
 void HeadTracker::update()
@@ -299,11 +489,33 @@ void HeadTracker::update()
     }
 
     if (_usingBno) {
+        // Poll immediately if hardware INT pin is asserted (active LOW),
+        // or every 2ms (500Hz) for non-blocking polling without I2C bus saturation.
+        bool intAsserted = (PIN_BNO_INT >= 0) && (digitalRead(PIN_BNO_INT) == LOW);
+        if (!intAsserted && (now - _lastPollMicros < 2000)) {
+            if (_anglesDirty) {
+                recomputeAngles();
+            }
+            return;
+        }
+        _lastPollMicros = now;
+
+        // Recover automatically if BNO085 experienced an internal reset or brown-out
+        if (_bno.wasReset()) {
+            LOG_WARN("BNO085 reset detected — re-enabling sensor reports");
+            applyFusionMode();
+        }
+
+        uint8_t expectedId = getActiveReportId();
+        bool gotQuat = false;
+
         while (_bno.getSensorEvent()) {
             uint8_t id = _bno.sensorValue.sensorId;
-            float qr = 1.0f, qi = 0.0f, qj = 0.0f, qk = 0.0f;
-            bool gotQuat = false;
+            if (id != expectedId) {
+                continue;
+            }
 
+            float qr = 1.0f, qi = 0.0f, qj = 0.0f, qk = 0.0f;
             if (id == SH2_ROTATION_VECTOR) {
                 qr = _bno.sensorValue.un.rotationVector.real;
                 qi = _bno.sensorValue.un.rotationVector.i;
@@ -322,12 +534,6 @@ void HeadTracker::update()
                 qj = _bno.sensorValue.un.gameRotationVector.j;
                 qk = _bno.sensorValue.un.gameRotationVector.k;
                 gotQuat = true;
-            } else if (id == SH2_ARVR_STABILIZED_GRV) {
-                qr = _bno.sensorValue.un.arvrStabilizedGRV.real;
-                qi = _bno.sensorValue.un.arvrStabilizedGRV.i;
-                qj = _bno.sensorValue.un.arvrStabilizedGRV.j;
-                qk = _bno.sensorValue.un.arvrStabilizedGRV.k;
-                gotQuat = true;
             }
 
             if (gotQuat) {
@@ -335,13 +541,19 @@ void HeadTracker::update()
             }
         }
 
-        // Relative 3D rotation: q_rel = q_zero^(-1) * q_current
-        // This mathematically eliminates all cross-talk between Pitch, Roll, and Yaw!
-        Quat qRel = quatMultiply(quatInverse(_zeroQuat), _currentQuat);
-        quatToEuler(qRel, _relPan, _relTilt, _relRoll);
-
-        // Keep absolute orientation for reference
-        quatToEuler(_currentQuat, _yaw, _pitch, _roll);
+        if (gotQuat) {
+            if (_pendingCenter) {
+                if (_pendingSkipSamples > 0) {
+                    _pendingSkipSamples--;
+                } else {
+                    center();
+                    return;
+                }
+            }
+            recomputeAngles();
+        } else if (_anglesDirty) {
+            recomputeAngles();
+        }
 
     } else if (_qmi.isConnected()) {
         if (_qmi.update()) {
@@ -354,8 +566,10 @@ void HeadTracker::update()
             float gz = _qmi.getGyroZ();
 
             // S3 Mini Pro inverted bottom-mount fix (-az upward normal reference)
-            float pitchAcc = atan2f(-ax, -az) * (180.0f / M_PI);
-            float rollAcc  = atan2f(ay, -az) * (180.0f / M_PI);
+            float nz = -az;
+            float signNz = (nz >= 0.0f) ? 1.0f : -1.0f;
+            float pitchAcc = atan2f(-ax, signNz * sqrtf(ay * ay + nz * nz)) * (180.0f / M_PI);
+            float rollAcc  = atan2f(ay, nz) * (180.0f / M_PI);
 
             constexpr float alpha = 0.98f;
             _pitch = alpha * (_pitch + gy * dt) + (1.0f - alpha) * pitchAcc;
@@ -364,39 +578,13 @@ void HeadTracker::update()
             _yaw += (-gz) * dt;
             if (_yaw > 180.0f)  _yaw -= 360.0f;
             if (_yaw < -180.0f) _yaw += 360.0f;
+
+            _currentQuat = eulerToQuat(_yaw, _pitch, _roll);
+            recomputeAngles();
+        } else if (_anglesDirty) {
+            recomputeAngles();
         }
-
-        _relTilt = _pitch - _zeroPitch;
-        _relRoll = _roll  - _zeroRoll;
-        _relPan  = _yaw   - _zeroYaw;
-        while (_relPan > 180.0f)  _relPan -= 360.0f;
-        while (_relPan < -180.0f) _relPan += 360.0f;
     }
-
-    // Apply axis swap if sensor is mounted rotated 90 degrees
-    float pan  = _relPan;
-    float tilt = _relTilt;
-    float roll = _relRoll;
-
-    if (_swapPitchRoll) {
-        float tmp = tilt;
-        tilt = roll;
-        roll = tmp;
-    }
-
-    // Apply axis inversions
-    if (_invertPan)  pan  = -pan;
-    if (_invertTilt) tilt = -tilt;
-    if (_invertRoll) roll = -roll;
-
-    _finalPan  = pan;
-    _finalTilt = tilt;
-    _finalRoll = roll;
-
-    // Convert relative angles to CRSF values
-    _crsfPan  = angleToCrsf(_finalPan,  HT_MAX_ANGLE_PAN,  false);
-    _crsfTilt = angleToCrsf(_finalTilt, HT_MAX_ANGLE_TILT, false);
-    _crsfRoll = angleToCrsf(_finalRoll, HT_MAX_ANGLE_ROLL, false);
 }
 
 void HeadTracker::getChannels16(uint16_t* channels)
@@ -411,3 +599,4 @@ void HeadTracker::getChannels16(uint16_t* channels)
     channels[HT_CH_TILT] = _crsfTilt;
     channels[HT_CH_ROLL] = _crsfRoll;
 }
+
