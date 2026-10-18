@@ -19,12 +19,14 @@ ELRS-Backpack-HT/
 ├── case/
 │   ├── Headtracker-Case_V6.3mf # Ready-to-print 3MF enclosure for Waveshare ESP32-C3 + BNO085
 │   └── Headtracker-Case_V6.scad # Parametric OpenSCAD enclosure source (BOSL2)
+├── scripts/
+│   └── generate_web_assets.py  # Reproducible pre-build generator (HTML5/CSS/JS -> gzipped src/web_assets.h)
 ├── src/
 │   ├── my_config.h            # Central compile-time defaults (UID, pinout, channels, angles, inversion)
 │   ├── main.cpp               # Dual-mode boot window, 50Hz ESP-NOW loop, Web-IF mode switch, serial commands
 │   ├── headtracker.h / .cpp   # BNO085 (9-DOF/AR-VR/6-DOF) driver, QMI8658 fallback, quaternion math, MD5 UID & NVS
 │   ├── web_config.h / .cpp    # SoftAP (192.168.4.1), Captive DNS, mDNS, RFC 6455 WebSocket server, REST & OTA
-│   ├── web_assets.h           # Gzipped single-file HTML5/CSS/JS + 60 FPS 3D Canvas frontend in PROGMEM
+│   ├── web_assets.h           # Auto-generated gzipped single-file HTML5/CSS/JS + 60 FPS 3D frontend in PROGMEM
 │   ├── serial_display.h/.cpp  # Visual ASCII level/horizon meters & status dashboard for headless boards
 │   ├── display_manager.h/.cpp # 0.85" LCD driver (ST7789 / GC9A01 auto-detect for S3 Mini Pro)
 │   ├── button_manager.h/.cpp  # Interrupt-latched 3-stage button engine & WS2812 RGB LED controller
@@ -111,8 +113,9 @@ The firmware features an interrupt-latched 3-stage button & LED priority engine 
 - **Normal Mode:** Runs the deterministic 50 Hz ESP-NOW transmitter loop (`10.0 dBm` default RF power). SoftAP, DNS, mDNS, and HTTP/WebSocket servers are completely uninitialized for zero background jitter.
 - **Web Configuration Mode:** Pauses ESP-NOW transmission, disables Wi-Fi power-save (`WIFI_PS_NONE`), and starts an open SoftAP (`ELRS-HeadTracker-AP`) on `192.168.4.1`, a Captive Portal wildcard DNS server (`*` $\to$ `192.168.4.1`), mDNS responder (`http://headtracker.local`), and HTTP/WebSocket server on port 80. No inactivity timeout is enforced; the device remains in AP mode until the user clicks *Save & Reboot* or power-cycles.
 
-### 2. 100% Offline Gzipped Frontend & 60 FPS 3D Renderer ([`src/web_assets.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_assets.h))
-- All HTML, CSS, JavaScript, client-side MD5 hashing, 3D model geometry, and rolling strip-chart rendering are self-contained in a single file compressed with `gzip -9` (`~14.0 KB` in `PROGMEM`) served with `Content-Encoding: gzip`.
+### 2. Reproducible 100% Offline Gzipped Frontend & 60 FPS 3D Renderer ([`scripts/generate_web_assets.py`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/scripts/generate_web_assets.py) $\to$ [`src/web_assets.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_assets.h))
+- The complete single-page HTML5, CSS, JavaScript, client-side MD5 hashing, 3D model geometry, and rolling strip-chart source lives in [`scripts/generate_web_assets.py`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/scripts/generate_web_assets.py).
+- Hooked into [`platformio.ini`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/platformio.ini) via `extra_scripts = pre:scripts/generate_web_assets.py` (and runnable standalone via `python scripts/generate_web_assets.py`), it compresses the frontend with deterministic `gzip -9` (`mtime=0`, `~14.0 KB` in `PROGMEM`) into [`src/web_assets.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_assets.h) served with `Content-Encoding: gzip`.
 - **30 Hz RFC 6455 WebSocket Stream (`/ws`):** `WebConfigManager` upgrades `/ws` connections on port 80 using `<mbedtls/sha1.h>` + `<mbedtls/base64.h>` and broadcasts JSON telemetry (`pan`, `tilt`, `roll`, `cPan`, `cTilt`, `cRoll`, `sensor`) every `33 ms` (~30 Hz), while accepting instant `{"cmd":"center"}` and `{"cmd":"tare"}` commands from the browser.
 - **Rear-Facing 3D Pilot Head & FPV Goggles (`rotatePointEuler`):** The 3D low-poly pilot head, goggle visor, rear strap cushion/battery pack, overhead strap, dual 5.8 GHz antennas, and forward cyan sight beam are rendered from a rear over-the-shoulder perspective (`[-x3, y3, -z3]`, facing away from the viewer into `-Z`) with `yaw = -panDeg`, `pitch = +tiltDeg`, and `roll = +rollDeg` so every movement of the 3D head matches the user's own head from behind.
 
@@ -177,7 +180,13 @@ The firmware features an interrupt-latched 3-stage button & LED priority engine 
 
 ## 8. Flashing & Upload Instructions
 
-The default environment in `platformio.ini` is set to `esp32c3`.
+The default environment in `platformio.ini` is set to `esp32c3`, and `extra_scripts = pre:scripts/generate_web_assets.py` automatically regenerates `src/web_assets.h` before building.
+
+To manually regenerate `src/web_assets.h` after editing `scripts/generate_web_assets.py`:
+```powershell
+python scripts/generate_web_assets.py
+```
+
 To build and upload directly to your Waveshare ESP32-C3:
 
 ```powershell

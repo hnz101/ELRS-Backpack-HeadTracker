@@ -159,12 +159,19 @@ The ESP32 communicates with your radio's ExpressLRS Backpack using a 6-byte MAC 
 ### 5. Build, Flash & Test via Serial Monitor (or Wireless OTA)
 
 1. Install [VS Code](https://code.visualstudio.com/) with the **PlatformIO IDE** extension.
-2. For the initial USB flash, connect your **Waveshare ESP32-C3** via USB-C (adjust `upload_port` / `monitor_port` in [`platformio.ini`](platformio.ini) if needed) and run:
+2. **Web-IF Asset Generation (`scripts/generate_web_assets.py` $\to$ `src/web_assets.h`):**
+   * The single-file HTML5/CSS/JS + 3D Canvas Web-IF source lives in [`scripts/generate_web_assets.py`](scripts/generate_web_assets.py), which compresses the frontend with deterministic `gzip -9` (`mtime=0`) into [`src/web_assets.h`](src/web_assets.h) (`PROGMEM`).
+   * PlatformIO runs [`scripts/generate_web_assets.py`](scripts/generate_web_assets.py) **automatically** before every build via `extra_scripts = pre:scripts/generate_web_assets.py` in [`platformio.ini`](platformio.ini).
+   * If you modify the Web-IF HTML/CSS/JS inside [`scripts/generate_web_assets.py`](scripts/generate_web_assets.py), you can also regenerate [`src/web_assets.h`](src/web_assets.h) manually at any time:
+     ```bash
+     python scripts/generate_web_assets.py
+     ```
+3. For the initial USB flash, connect your **Waveshare ESP32-C3** via USB-C (adjust `upload_port` / `monitor_port` in [`platformio.ini`](platformio.ini) if needed) and run:
    ```bash
    pio run -e esp32c3 --target upload
    ```
-   *(For subsequent updates, you can simply upload `.pio/build/esp32c3/firmware.bin` wirelessly in the Web-IF **Wireless OTA Update** tab!).*
-3. Open the PlatformIO Serial Monitor (`115200` baud):
+   *(For subsequent updates, you can simply build with `pio run -e esp32c3` and upload `.pio/build/esp32c3/firmware.bin` wirelessly in the Web-IF **Wireless OTA Update** tab!).*
+4. Open the PlatformIO Serial Monitor (`115200` baud):
    ```bash
    pio device monitor -e esp32c3
    ```
@@ -291,14 +298,21 @@ Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://gi
 | :---: | :---: |
 | ![Headtracker Case CAD](img/Headtracker_case_1.jpg) | ![Headtracker Case Real Life](img/Headtracker_case_2.jpg) |
 
-### 3. Firmware flashen & per Web-IF (oder `my_config.h`) konfigurieren
-1. Mit PlatformIO erstmalig per USB-C kompilieren und flashen:
+### 3. Firmware bauen, flashen & per Web-IF (oder `my_config.h`) konfigurieren
+1. **Web-IF Assets & Reproduzierbarer Build (`scripts/generate_web_assets.py`):**
+   * Der gesamte Quellcode des Web-Interfaces (HTML5, CSS, JS, 3D-Renderer) befindet sich in [`scripts/generate_web_assets.py`](scripts/generate_web_assets.py) und wird automatisch bei jedem PlatformIO-Build (`extra_scripts = pre:scripts/generate_web_assets.py` in [`platformio.ini`](platformio.ini)) deterministisch mit `gzip -9` in die Header-Datei [`src/web_assets.h`](src/web_assets.h) (`PROGMEM`) komprimiert.
+   * Bei Änderungen am Web-Interface kann [`src/web_assets.h`](src/web_assets.h) jederzeit auch manuell neu generiert werden:
+     ```bash
+     python scripts/generate_web_assets.py
+     ```
+2. Mit PlatformIO erstmalig per USB-C kompilieren und flashen:
    ```bash
    pio run -e esp32c3 --target upload
    ```
-2. **Web-Interface starten:** Entweder während der ersten 5 Sekunden nach dem Einschalten (pulsierende blaue LED) kurz auf den **BOOT-Taster (`GPIO 9`)** klicken, im laufenden Betrieb den **BOOT-Taster für 5 Sekunden gedrückt halten** (LED wechselt von Gelb auf Magenta) oder im Serial Monitor **`W`** senden.
-3. Mit dem offenen WLAN **`ELRS-HeadTracker-AP`** verbinden und **[http://192.168.4.1](http://192.168.4.1)** (bzw. `http://headtracker.local`) öffnen.
-4. Eigene **ExpressLRS Binding-Phrase** eintragen (6-Byte `UID` wird automatisch berechnet), im 3D-Modell die Wirkrichtungen prüfen und auf **Save & Reboot to Normal Mode** klicken.
+   *(Spätere Firmware-Updates können einfach mit `pio run -e esp32c3` kompiliert und über den Tab **Wireless OTA Update** als `.pio/build/esp32c3/firmware.bin` kabellos per WLAN eingespielt werden).*
+3. **Web-Interface starten:** Entweder während der ersten 5 Sekunden nach dem Einschalten (pulsierende blaue LED) kurz auf den **BOOT-Taster (`GPIO 9`)** klicken, im laufenden Betrieb den **BOOT-Taster für 5 Sekunden gedrückt halten** (LED wechselt von Gelb auf Magenta) oder im Serial Monitor **`W`** senden.
+4. Mit dem offenen WLAN **`ELRS-HeadTracker-AP`** verbinden und **[http://192.168.4.1](http://192.168.4.1)** (bzw. `http://headtracker.local`) öffnen.
+5. Eigene **ExpressLRS Binding-Phrase** eintragen (6-Byte `UID` wird automatisch berechnet), im 3D-Modell die Wirkrichtungen prüfen und auf **Save & Reboot to Normal Mode** klicken.
 
 ### 4. EdgeTX & ELRS Backpack einrichten
 1. Im **ExpressLRS Backpack Lua-Script** (bzw. Web-UI):
