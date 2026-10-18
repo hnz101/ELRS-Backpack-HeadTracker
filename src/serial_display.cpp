@@ -49,13 +49,14 @@ void SerialDisplay::printHelp()
     Serial.println("   'y'         : Toggle Invert Pan / Yaw (Left <-> Right)");
     Serial.println("   'o'         : Toggle Invert Roll");
     Serial.println("   'w'         : Toggle LIVE HeadTracker <-> TEST WAVE");
+    Serial.println("   'W' (Shift) : Enter WiFi Web-IF Configuration & 3D Telemetry AP Mode");
     Serial.println("   'm'         : Toggle ASCII Display Mode (Compact/Dashboard)");
     Serial.println("   'd'         : Toggle Serial Output Mute / Unmute");
     Serial.println("   '1'..'3'    : Set Radio Mode (1=RX, 2=TX, 3=BOTH)");
     Serial.println("   '?' or 'h'  : Show this help menu");
     Serial.println(" Physical Controls:");
-    Serial.println("   BOOT Switch (GPIO 9) : Short Click = Center | Long Press = Calibrate");
-    Serial.println("   RGB LED (GPIO 10)    : Green=TX OK | Red=TX Err | Cyan=Zero | Yellow=Cal");
+    Serial.println("   BOOT Switch (GPIO 9) : Click in 5s Blue Boot OR Hold 5.0s = Web AP | Click = Zero | Hold 1.2s = Tare");
+    Serial.println("   RGB LED (GPIO 10)    : Green=TX OK | Red=Err | Magenta=Web AP | Cyan=Zero | Yellow=Tare");
     Serial.println("==========================================================");
     Serial.println();
 }

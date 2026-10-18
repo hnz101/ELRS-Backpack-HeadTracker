@@ -27,16 +27,33 @@ public:
     void setFusionMode(uint8_t mode);
     uint8_t getFusionMode() const { return _fusionMode; }
 
-    // Runtime axis inversion and swap toggles
+    // Runtime axis inversion and swap toggles & setters
     void toggleInvertTilt();
     void toggleInvertPan();
     void toggleInvertRoll();
     void toggleSwapPitchRoll();
 
+    void setInvertTilt(bool inv);
+    void setInvertPan(bool inv);
+    void setInvertRoll(bool inv);
+    void setSwapPitchRoll(bool swap);
+
     bool getInvertTilt() const { return _invertTilt; }
     bool getInvertPan()  const { return _invertPan; }
     bool getInvertRoll() const { return _invertRoll; }
     bool getSwapPitchRoll() const { return _swapPitchRoll; }
+
+    // Configurable max deflection angles (degrees)
+    void setMaxAngles(float maxPan, float maxTilt, float maxRoll);
+    float getMaxAnglePan()  const { return _maxAnglePan; }
+    float getMaxAngleTilt() const { return _maxAngleTilt; }
+    float getMaxAngleRoll() const { return _maxAngleRoll; }
+
+    // Configurable EdgeTX Trainer channel mapping (0..15 = TR1..TR16)
+    void setChannelMapping(uint8_t chPan, uint8_t chTilt, uint8_t chRoll);
+    uint8_t getChPan()  const { return _chPan; }
+    uint8_t getChTilt() const { return _chTilt; }
+    uint8_t getChRoll() const { return _chRoll; }
 
     // Current relative angles in degrees
     float getPan()  const { return _finalPan; }
@@ -53,11 +70,20 @@ public:
     uint16_t getCrsfTilt() const { return _crsfTilt; }
     uint16_t getCrsfRoll() const { return _crsfRoll; }
 
-    // Fill all 16 trainer channels (Pan=CH0/TR1, Tilt=CH1/TR2, Roll=CH2/TR3)
+    // Fill all 16 trainer channels (Pan=TR1, Tilt=TR2, Roll=TR3 by default)
     void getChannels16(uint16_t* channels);
 
     bool isSensorConnected() const;
     const char* getSensorName() const;
+
+    void loadSettings();
+    void saveSettings();
+
+    // ExpressLRS Binding Phrase MD5 -> 6-byte UID helper & NVS network config persistence
+    static void computeElrsUid(const char* phrase, uint8_t outUid[6]);
+    static bool isUidNonZero(const uint8_t uid[6]);
+    static bool loadNetworkConfig(uint8_t outUid[6], String &outPhrase, int8_t &outTxPower);
+    static void saveNetworkConfig(const uint8_t uid[6], const char* phrase, int8_t txPower);
 
 private:
     BNO08x   _bno;
@@ -66,11 +92,21 @@ private:
     uint8_t  _bnoAddress;
     uint8_t  _fusionMode;
 
-    //Runtime orientation options
+    // Runtime orientation options
     bool     _swapPitchRoll;
     bool     _invertPan;
     bool     _invertTilt;
     bool     _invertRoll;
+
+    // Max deflection angles (degrees)
+    float    _maxAnglePan;
+    float    _maxAngleTilt;
+    float    _maxAngleRoll;
+
+    // Trainer channel assignment (0..15)
+    uint8_t  _chPan;
+    uint8_t  _chTilt;
+    uint8_t  _chRoll;
 
     uint32_t _lastUpdateMicros;
     uint32_t _lastPollMicros;
@@ -111,9 +147,6 @@ private:
     void applyFusionMode();
     void recomputeAngles();
     uint8_t getActiveReportId() const;
-
-    void loadSettings();
-    void saveSettings();
 
     static Quat quatNormalize(const Quat& q);
     static Quat quatMultiply(const Quat& q1, const Quat& q2);

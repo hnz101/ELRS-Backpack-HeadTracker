@@ -14,7 +14,7 @@ Jump to: **[🇺🇸 English Documentation](#-english-documentation)** | **[🇩
 
 This project turns an **ESP32** and an **IMU sensor** into a **completely wireless, low-latency 3-axis FPV HeadTracker (Pan / Tilt / Roll)** that transmits directly to your **ExpressLRS TX Backpack** over **ESP-NOW** (`MSP_ELRS_BACKPACK_SET_PTR` / 11-bit CRSF Trainer channels `TR1..TR3` at 50 Hz) — **no trainer cable between your FPV goggles and RC radio required!**
 
-It evolved from an ExpressLRS Backpack ESP-NOW example into a full-featured, ready-to-build HeadTracker system including a custom 3D-printable goggle case, 9-DOF quaternion math, an interactive USB Serial ASCII dashboard, and non-volatile settings storage.
+It evolved from an ExpressLRS Backpack ESP-NOW example into a full-featured, ready-to-build HeadTracker system including a **100% offline-capable Wi-Fi Web-IF with 60 FPS 3D telemetry & Wireless OTA updates**, dynamic ExpressLRS binding phrase MD5 hashing, a custom 3D-printable goggle case, 9-DOF quaternion math, an interactive USB Serial ASCII dashboard, and non-volatile settings storage.
 
 ### 🙏 Credits & Acknowledgments
 
@@ -23,6 +23,15 @@ A huge thank you to **[druckgott](https://github.com/druckgott)** and his origin
 ---
 
 ## ✨ What Was Done / Key Features
+
+* 🌐 **Wi-Fi Web-IF Configuration, Real-Time 3D Telemetry & Wireless OTA:**
+  * **100% Offline Self-Contained Portal:** Built-in open SoftAP (`ELRS-HeadTracker-AP`, IP `192.168.4.1`, Captive Portal DNS, and `http://headtracker.local` mDNS) serving a gzipped single-page application directly from flash (`PROGMEM`) — **no internet connection or external CDNs required**.
+  * **60 FPS 3D FPV Goggles & Pilot Head Animation:** Pure HTML5 Canvas 3D renderer (rear over-the-shoulder view) and 3-second rolling 3-axis strip chart driven by live **30 Hz WebSocket telemetry** (`ws://192.168.4.1/ws`), plus live 11-bit CRSF channel bars (`172..1811` / `988..2012 us`).
+  * **Dynamic ExpressLRS Binding Phrase & MD5 Auto-Hashing:** Enter your plain-text ExpressLRS Binding Phrase directly in the Web UI (or override with a manual 6-byte UID) — automatically computes the 6-byte UID (`MD5("-DMY_BINDING_PHRASE=\"" + phrase + "\"")[0..5]` with unicast bit fix `UID[0] &= ~0x01`) with instant live preview and saves it to NVS.
+  * **Live Parameter Tuning:** Adjust BNO085 Sensor Fusion Mode (`0`/`1`/`2`), Max Deflection Angles (Pan/Tilt/Roll), Axis Inversions, $90^\circ$ Pitch/Roll Swap, EdgeTX Trainer Channel Mapping (`TR1..TR16`), and WiFi RF Output Power (`2.0..19.5 dBm`) in real time with a single click to **Save to NVS** or **Save & Reboot**.
+  * **Wireless OTA Firmware Updates:** Drag-and-drop a compiled `firmware.bin` directly in the **Wireless OTA Update** tab to flash over Wi-Fi with a live progress bar and automatic reboot.
+
+![HeadTracker Web-IF Configuration & 3D Telemetry](img/HeadTracker_WEBIF_screen.png)
 
 * 🧭 **9-DOF Sensor Fusion (BNO085) with Zero Yaw Drift:**
   * Primary support for the **Waveshare ESP32-C3-Zero (Mini)** paired with an external **Adafruit / Hillcrest BNO085 9-DOF IMU** over 400 kHz I2C.
@@ -36,17 +45,19 @@ A huge thank you to **[druckgott](https://github.com/druckgott)** and his origin
   * Separates **World-Z azimuth zeroing** (around true Gravity Up) from **local goggle mounting tilt/roll** compensation. Even if the headtracker is mounted at a steep angle on curved FPV goggles, panning your head left/right produces **0% roll or pitch bleed**.
   * Includes an $\text{SO}(3)$ quaternion space $90^\circ$ axis swap (`HT_SWAP_PITCH_ROLL`) prior to Intrinsic $Z\text{-}Y'\text{-}X''$ (`Pan -> Tilt -> Roll`) Euler extraction to support rotated board mounting.
 * 🖥️ **Interactive USB Serial Console & Live ASCII Dashboard:**
-  * Built-in real-time ASCII horizon/level meters over USB CDC (`115200` baud) for headless boards like the ESP32-C3 — view live angles, CRSF channel values (`TR1..TR3`), packet counters, and toggle axis inversions, fusion modes, or WiFi TX power on the fly.
-  * All runtime adjustments (`'f'`, `'p'`, `'y'`, `'o'`, `'s'`, `'t'`) are automatically saved to **ESP32 NVS (`Preferences`)** so they survive power cycles.
+  * Built-in real-time ASCII horizon/level meters over USB CDC (`115200` baud) for headless boards like the ESP32-C3 — view live angles, CRSF channel values (`TR1..TR3`), packet counters, and toggle axis inversions, fusion modes, WiFi TX power, or launch Web-IF mode (`'W'`) on the fly.
+  * All runtime adjustments (`'f'`, `'p'`, `'y'`, `'o'`, `'s'`, `'t'`) and Web-IF settings are automatically saved to **ESP32 NVS (`Preferences`)** so they survive power cycles.
 
 ![HeadTracker Serial Debug Dashboard](img/Headtracker_debug_screen.png)
 
-* 🔘 **Single-Button Operation & WS2812 RGB Status LED:**
-  * **Short Click (< 1.5s)** on the onboard BOOT switch (`GPIO 9`): Center / Zero head position (`Cyan` LED flash).
-  * **Long Press (> 1.5s)** on the onboard BOOT switch (`GPIO 9`): Hardware Tare / Calibrate IMU (`Yellow` LED flash).
-  * **Heartbeat LED (`GPIO 10`):** Solid `Green` = ESP-NOW TX OK, `Red` = TX Error, `Dim Cyan` = Initializing.
+* 🔘 **3-Stage Single-Button Operation & WS2812 RGB Status LED:**
+  * **Boot Window (`0 .. 5.0s` after power-up, Pulsing `Blue` LED):** Click the onboard BOOT switch (`GPIO 9`) during the 5-second blue boot pulse to enter **Wi-Fi Web-IF Configuration Mode**.
+  * **Short Click (`< 1.2s`)** on the BOOT switch (`GPIO 9`): Center / Zero head position (`Cyan` LED flash).
+  * **Medium Hold (`1.2s .. 5.0s`)** on the BOOT switch (`GPIO 9`): LED lights `Yellow` at `1.2s` — release before `5.0s` to trigger Hardware Tare / Calibrate IMU (`Yellow` LED flash).
+  * **Long Hold (`>= 5.0s`)** on the BOOT switch (`GPIO 9`): LED switches to `Magenta` at `5.0s` and immediately enters **Wi-Fi Web-IF Configuration Mode** at any time during operation.
+  * **Status LED (`GPIO 10`):** Pulsing `Blue` = 5s Boot Window, Solid `Green` = 50 Hz ESP-NOW TX OK, `Red` = TX Error, Breathing `Magenta` (`#7A00B8`) = Web-IF AP Mode active.
 * ❄️ **Cool RF Operation (Adjustable WiFi TX Power):**
-  * Defaults to `10.0 dBm` (`10 mW`) instead of `19.5 dBm` (`89 mW`), reducing board heat by ~89% while easily covering the 1–2 meter distance between goggles and transmitter. Adjustable live via Serial (`'t'`).
+  * Defaults to `10.0 dBm` (`10 mW`) instead of `19.5 dBm` (`89 mW`), reducing board heat by ~89% while easily covering the 1–2 meter distance between goggles and transmitter. Adjustable live via Web-IF or Serial (`'t'`).
 * 💻 **Dual-Hardware Support:**
   * **Target 1 (Default):** **Waveshare ESP32-C3-Zero (Mini)** + external **BNO085** (`env:esp32c3`).
   * **Target 2 (Alternative):** **WEMOS LOLIN S3 Mini Pro** (`env:lolin_s3_mini_pro`) with onboard **QMI8658 6-DOF IMU** and **0.85" 128x128 TFT LCD** (ST7789 / GC9A01 auto-detection).
@@ -101,20 +112,32 @@ The [`case/`](case) folder contains the custom enclosure specifically engineered
 
 ---
 
-### 4. Configure Your ExpressLRS Binding UID
+### 4. Configure via Wi-Fi Web-IF (or `my_config.h`)
 
-The ESP32 communicates with your radio's ExpressLRS Backpack using a 6-byte MAC address (`UID`) derived from your **ELRS Binding Phrase**.
+The ESP32 communicates with your radio's ExpressLRS Backpack using a 6-byte MAC address (`UID`) derived from your **ELRS Binding Phrase**. You can configure your Binding Phrase, UID, and all IMU parameters **wirelessly via the built-in Web-IF** (no re-compilation required) or statically in [`src/my_config.h`](src/my_config.h).
 
-1. Open the **[ExpressLRS Web Flasher](https://expresslrs.github.io/web-flasher/)** (or check your ELRS TX Backpack Web UI) and type in your binding phrase to get your 6-byte `UID`:
+#### Method A: Wireless Web-IF Configuration (Recommended)
+1. **Enter Web Configuration Mode** using any of the following triggers:
+   * **On Power-Up:** Click the **BOOT button (`GPIO 9`)** while the RGB LED pulses **Blue** during the first 5 seconds after boot.
+   * **Anytime During Operation:** Hold the **BOOT button (`GPIO 9`)** for **5 seconds** (LED turns Yellow at `1.2s`, then **Magenta** at `5.0s`).
+   * **Via USB Serial:** Send **`W`** (uppercase) in the Serial Monitor.
+   * *(If no valid UID is stored yet, the tracker enters Web-IF Mode automatically on boot).*
+2. Once the RGB LED breathes **Magenta (`#7A00B8`)**, connect your phone or laptop to the open Wi-Fi hotspot:
+   * **SSID:** `ELRS-HeadTracker-AP` *(no password)*
+   * **URL:** **[http://192.168.4.1](http://192.168.4.1)** *(or `http://headtracker.local` / automatic Captive Portal pop-up)*
+3. Type your **ExpressLRS Binding Phrase** into the Web UI (it automatically computes the 6-byte MD5 UID with live preview), verify the **60 FPS 3D head orientation**, tune your angles/inversions, and click **Save & Reboot to Normal Mode**.
+
+#### Method B: Compile-Time Configuration (`src/my_config.h`)
+1. Alternatively, you can obtain your 6-byte `UID` from the **[ExpressLRS Web Flasher](https://expresslrs.github.io/web-flasher/)**:
 
 ![ELRS Config](img/config.png)
 ![ELRS UID](img/uid.png)
 
-2. Open [`src/my_config.h`](src/my_config.h) (you can also use [`src/my_config.h.example`](src/my_config.h.example) as a reference) and enter your 6 UID numbers into `MY_CUSTOM_UID`:
+2. Open [`src/my_config.h`](src/my_config.h) (or copy [`src/my_config.h.example`](src/my_config.h.example)) and set your defaults:
 
 ```cpp
 // 1. Your ExpressLRS Binding UID
-#define MY_CUSTOM_UID {0, 0, 0, 0, 0, 0} // <-- Replace with your 6 numbers!
+#define MY_CUSTOM_UID {0, 0, 0, 0, 0, 0} // <-- Replace with your 6 numbers (or set via Web-IF)!
 
 // 2. BNO085 Sensor Fusion Mode (0 = 9-DOF Mag, 1 = 9-DOF AR/VR, 2 = 6-DOF Game RV)
 #define BNO085_FUSION_MODE  0
@@ -133,14 +156,14 @@ The ESP32 communicates with your radio's ExpressLRS Backpack using a 6-byte MAC 
 
 ---
 
-### 5. Build, Flash & Test via Serial Monitor
+### 5. Build, Flash & Test via Serial Monitor (or Wireless OTA)
 
 1. Install [VS Code](https://code.visualstudio.com/) with the **PlatformIO IDE** extension.
-2. Connect your **Waveshare ESP32-C3** via USB-C (adjust `upload_port` / `monitor_port` in [`platformio.ini`](platformio.ini) if needed) and flash:
+2. For the initial USB flash, connect your **Waveshare ESP32-C3** via USB-C (adjust `upload_port` / `monitor_port` in [`platformio.ini`](platformio.ini) if needed) and run:
    ```bash
    pio run -e esp32c3 --target upload
    ```
-   *(For the WEMOS LOLIN S3 Mini Pro, use `pio run -e lolin_s3_mini_pro --target upload`).*
+   *(For subsequent updates, you can simply upload `.pio/build/esp32c3/firmware.bin` wirelessly in the Web-IF **Wireless OTA Update** tab!).*
 3. Open the PlatformIO Serial Monitor (`115200` baud):
    ```bash
    pio device monitor -e esp32c3
@@ -152,6 +175,7 @@ The ESP32 communicates with your radio's ExpressLRS Backpack using a 6-byte MAC 
 | :---: | :--- |
 | **`c`** or **`SPACE`** | **Center / Zero** head position to current orientation |
 | **`r`** | **Calibrate / Tare** IMU sensor |
+| **`W`** *(Shift+w)* | **Enter Wi-Fi Web-IF Configuration & 3D Telemetry AP Mode** (`ELRS-HeadTracker-AP`) |
 | **`f`** | **Cycle IMU Fusion Mode** (`9-DOF Mag` $\leftrightarrow$ `AR/VR 9-DOF` $\leftrightarrow$ `6-DOF Game RV`) *(saved to NVS)* |
 | **`p`** | **Toggle Invert Pitch / Tilt** *(saved to NVS)* |
 | **`y`** | **Toggle Invert Pan / Yaw** *(saved to NVS)* |
@@ -207,11 +231,20 @@ Official ExpressLRS Trainer Input documentation: https://www.expresslrs.org/soft
 
 Dieses Projekt verwandelt einen **ESP32-C3** und einen **9-DOF IMU-Sensor (BNO085)** in einen **komplett kabellosen 3-Achsen FPV-HeadTracker (Pan / Tilt / Roll)**, der seine Kanaldaten direkt per **ESP-NOW** (`MSP_ELRS_BACKPACK_SET_PTR` / 11-Bit CRSF Trainer-Kanäle `TR1..TR3` mit 50 Hz) an das **ExpressLRS TX-Backpack** der Fernsteuerung überträgt.
 
-Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://github.com/druckgott/ELRS-Backpack-Example-ESPNOW)** (vielen Dank für die großartige Vorarbeit bei der ESP-NOW / CRSF / Raw-802.11-Implementierung!) und wurde zu einem vollwertigen HeadTracker-System inkl. 3D-druckbarem Gehäuse, gravitationsausgerichteter 3D-Quaternionen-Mathematik und interaktivem Serial-Dashboard ausgebaut.
+Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://github.com/druckgott/ELRS-Backpack-Example-ESPNOW)** (vielen Dank für die großartige Vorarbeit bei der ESP-NOW / CRSF / Raw-802.11-Implementierung!) und wurde zu einem vollwertigen HeadTracker-System inkl. **100% offline-fähigem Wi-Fi Web-Interface mit 60 FPS 3D-Echtzeit-Telemetrie & Wireless OTA-Updates**, dynamischer ELRS Binding-Phrase MD5-Generierung, 3D-druckbarem Gehäuse, gravitationsausgerichteter 3D-Quaternionen-Mathematik und interaktivem Serial-Dashboard ausgebaut.
 
 ---
 
 ## ✨ Neuerungen & Features
+
+* 🌐 **Wi-Fi Web-Interface, 3D-Echtzeit-Telemetrie & Wireless OTA:**
+  * **100% Offline-fähiges Web-Portal:** Integrierter WLAN-Access-Point (`ELRS-HeadTracker-AP`, IP `192.168.4.1`, Captive Portal DNS sowie `http://headtracker.local` mDNS), komplett komprimiert im Flash-Speicher (`PROGMEM`) abgelegt — **keine Internetverbindung nötig**.
+  * **60 FPS 3D FPV-Brillen & Pilotenkopf-Animation:** Reine HTML5-Canvas 3D-Darstellung (Ansicht von hinten über die Schulter) sowie ein 3-Sekunden Echtzeit-Liniendiagramm per **30 Hz WebSockets** (`ws://192.168.4.1/ws`) inkl. 11-Bit CRSF-Kanalbalken (`172..1811`).
+  * **Dynamische ExpressLRS Binding-Phrase & MD5-Hashing:** Einfach die ExpressLRS Binding-Phrase im Klartext eingeben — die 6-Byte `UID` wird live per MD5 berechnet (oder manuell überschrieben) und dauerhaft im NVS gespeichert.
+  * **Echtzeit-Konfiguration:** Fusions-Modus (`0`/`1`/`2`), Maximalwinkel (Pan/Tilt/Roll), Achsen-Invertierungen, $90^\circ$ Pitch/Roll-Tausch, EdgeTX Trainer-Kanalzuordnung (`TR1..TR16`) und WLAN-Sendeleistung (`2.0..19.5 dBm`) bequem im Browser einstellen.
+  * **Kabelloses OTA Firmware-Update:** Neue `firmware.bin`-Dateien direkt über den Tab **Wireless OTA Update** per WLAN flashen.
+
+![HeadTracker Web-IF Configuration & 3D Telemetry](img/HeadTracker_WEBIF_screen.png)
 
 * 🧭 **Driftfreies 9-DOF Tracking mit dem BNO085:**
   * Unterstützt den kompakten **Waveshare ESP32-C3-Zero (Mini)** mit externem **Adafruit / Hillcrest BNO085 9-DOF Sensor** über 400 kHz I2C.
@@ -223,11 +256,13 @@ Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://gi
   * Unterstützt $90^\circ$ gedrehten Einbau (`HT_SWAP_PITCH_ROLL`) direkt im Quaternionen-Raum.
 * 🖥️ **Interaktives USB-Serial ASCII-Dashboard & NVS-Speicherung:**
   * Echtzeit-Wasserwaage / Balkenanzeige über USB-Serial (`115200` Baud) für Boards ohne eigenes Display (siehe [`img/Headtracker_debug_screen.png`](img/Headtracker_debug_screen.png)).
-  * Alle per Tastendruck im Serial-Monitor geänderten Einstellungen (Achsen-Invertierung, $90^\circ$-Tausch, Fusions-Modus, WLAN-Sendeleistung) werden automatisch dauerhaft im **ESP32 Flash (NVS)** gespeichert.
-* 🔘 **Ein-Tasten-Bedienung & RGB-Status-LED:**
-  * **Kurzer Klick (< 1.5s)** auf den BOOT-Taster (`GPIO 9`): HeadTracker zentrieren / nullen (`Cyan` LED-Blinken).
-  * **Langer Druck (> 1.5s)** auf den BOOT-Taster (`GPIO 9`): Sensor kalibrieren / Tare (`Gelb` LED-Blinken).
-  * **Status-LED (`GPIO 10`):** `Grün` = ESP-NOW Senden OK, `Rot` = Sendefehler.
+  * Alle im Web-IF oder per Tastendruck im Serial-Monitor geänderten Einstellungen werden automatisch dauerhaft im **ESP32 Flash (NVS)** gespeichert.
+* 🔘 **3-Stufen Ein-Tasten-Bedienung & RGB-Status-LED:**
+  * **Boot-Fenster (`0 .. 5.0s` nach dem Einschalten, pulsierende `Blaue` LED):** Klick auf den BOOT-Taster (`GPIO 9`) startet den **Wi-Fi Web-IF Konfigurationsmodus**.
+  * **Kurzer Klick (`< 1.2s`)** auf den BOOT-Taster (`GPIO 9`): HeadTracker zentrieren / nullen (`Cyan` LED-Blinken).
+  * **Mittlerer Druck (`1.2s .. 5.0s`)** auf den BOOT-Taster (`GPIO 9`): LED leuchtet ab `1.2s` `Gelb` — Loslassen vor `5.0s` kalibriert den Sensor / Tare (`Gelb` LED-Blinken).
+  * **Langer Druck (`>= 5.0s`)** auf den BOOT-Taster (`GPIO 9`): LED wechselt bei `5.0s` auf `Magenta` und startet sofort den **Wi-Fi Web-IF Konfigurationsmodus** im laufenden Betrieb.
+  * **Status-LED (`GPIO 10`):** Pulsierend `Blau` = 5s Boot-Fenster, `Grün` = 50 Hz ESP-NOW Senden OK, `Rot` = Sendefehler, Atmendes `Magenta` (`#7A00B8`) = Web-IF AP-Modus aktiv.
 * 📦 **3D-Druck-Gehäuse im Ordner [`case/`](case):**
   * Druckfertige 3MF-Datei ([`case/Headtracker-Case_V6.3mf`](case/Headtracker-Case_V6.3mf)) sowie parametrisches OpenSCAD-Modell ([`case/Headtracker-Case_V6.scad`](case/Headtracker-Case_V6.scad)) für **Waveshare ESP32-C3-Zero + Adafruit BNO085 STEMMA QT** mit integrierten Taster-Stößeln, LED-Sichtfenster, Platinen-Schnappclip, L-Deckel und Klett-/Kopfband-Halterung.
 
@@ -256,14 +291,14 @@ Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://gi
 | :---: | :---: |
 | ![Headtracker Case CAD](img/Headtracker_case_1.jpg) | ![Headtracker Case Real Life](img/Headtracker_case_2.jpg) |
 
-### 3. ELRS UID eintragen & Firmware flashen
-1. Eigene 6-Byte `UID` über den **[ExpressLRS Web Flasher](https://expresslrs.github.io/web-flasher/)** aus der eigenen Binding-Phrase generieren.
-2. In [`src/my_config.h`](src/my_config.h) unter `#define MY_CUSTOM_UID { ... }` eintragen.
-3. Mit PlatformIO kompilieren und flashen:
+### 3. Firmware flashen & per Web-IF (oder `my_config.h`) konfigurieren
+1. Mit PlatformIO erstmalig per USB-C kompilieren und flashen:
    ```bash
    pio run -e esp32c3 --target upload
    ```
-4. Im Serial Monitor (`pio device monitor -e esp32c3`) mit `'c'` zentrieren und bei Bedarf mit `'p'`, `'y'`, `'o'`, `'s'` die Wirkrichtungen an das eigene Kamera-Gimbal anpassen.
+2. **Web-Interface starten:** Entweder während der ersten 5 Sekunden nach dem Einschalten (pulsierende blaue LED) kurz auf den **BOOT-Taster (`GPIO 9`)** klicken, im laufenden Betrieb den **BOOT-Taster für 5 Sekunden gedrückt halten** (LED wechselt von Gelb auf Magenta) oder im Serial Monitor **`W`** senden.
+3. Mit dem offenen WLAN **`ELRS-HeadTracker-AP`** verbinden und **[http://192.168.4.1](http://192.168.4.1)** (bzw. `http://headtracker.local`) öffnen.
+4. Eigene **ExpressLRS Binding-Phrase** eintragen (6-Byte `UID` wird automatisch berechnet), im 3D-Modell die Wirkrichtungen prüfen und auf **Save & Reboot to Normal Mode** klicken.
 
 ### 4. EdgeTX & ELRS Backpack einrichten
 1. Im **ExpressLRS Backpack Lua-Script** (bzw. Web-UI):
@@ -274,4 +309,4 @@ Das Projekt basiert auf dem ESP-NOW Bridge-Beispiel von **[druckgott](https://gi
    * **Trainer Mode:** `Master / CRSF`
    * In den **Inputs / Mischern** die Quellen **`TR1` (Pan)**, **`TR2` (Tilt)** und **`TR3` (Roll)** den jeweiligen Servo-Kanälen zuweisen.
 
-Weitere technische Details zur Architektur und den 9-DOF Quaternionen-Berechnungen befinden sich in **[HANDOFF.md](HANDOFF.md)**.
+Weitere technische Details zur Architektur, dem Web-Server und den 9-DOF Quaternionen-Berechnungen befinden sich in **[HANDOFF.md](HANDOFF.md)**.

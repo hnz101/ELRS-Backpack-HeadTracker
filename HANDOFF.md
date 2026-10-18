@@ -13,13 +13,21 @@
 ```
 ELRS-Backpack-HT/
 ├── platformio.ini              # Default: esp32c3 (COM20), also supports lolin_s3_mini_pro (COM19)
+├── img/
+│   ├── HeadTracker_WEBIF_screen.png # Screenshot of the 100% offline Web-IF & 60 FPS 3D Telemetry UI
+│   └── Headtracker_debug_screen.png # Screenshot of the USB Serial ASCII level dashboard
+├── case/
+│   ├── Headtracker-Case_V6.3mf # Ready-to-print 3MF enclosure for Waveshare ESP32-C3 + BNO085
+│   └── Headtracker-Case_V6.scad # Parametric OpenSCAD enclosure source (BOSL2)
 ├── src/
-│   ├── my_config.h            # Central configuration (UID, pinout, channels, angles, inversion)
-│   ├── main.cpp               # Setup, ESP-NOW init, 50Hz main loop, interactive serial commands
-│   ├── headtracker.h / .cpp   # BNO085 (6-DOF Game-RV/9-DOF) driver, QMI8658 fallback, relative zeroing
+│   ├── my_config.h            # Central compile-time defaults (UID, pinout, channels, angles, inversion)
+│   ├── main.cpp               # Dual-mode boot window, 50Hz ESP-NOW loop, Web-IF mode switch, serial commands
+│   ├── headtracker.h / .cpp   # BNO085 (9-DOF/AR-VR/6-DOF) driver, QMI8658 fallback, quaternion math, MD5 UID & NVS
+│   ├── web_config.h / .cpp    # SoftAP (192.168.4.1), Captive DNS, mDNS, RFC 6455 WebSocket server, REST & OTA
+│   ├── web_assets.h           # Gzipped single-file HTML5/CSS/JS + 60 FPS 3D Canvas frontend in PROGMEM
 │   ├── serial_display.h/.cpp  # Visual ASCII level/horizon meters & status dashboard for headless boards
 │   ├── display_manager.h/.cpp # 0.85" LCD driver (ST7789 / GC9A01 auto-detect for S3 Mini Pro)
-│   ├── button_manager.h/.cpp  # Debounced button engine & WS2812 RGB LED controller with flash priority
+│   ├── button_manager.h/.cpp  # Interrupt-latched 3-stage button engine & WS2812 RGB LED controller
 │   ├── qmi8658.h / .cpp       # Fast I2C driver for onboard 6-axis IMU (fallback)
 │   └── fake_vrx_fake_trainer.cpp # Raw 802.11 ESP-NOW packet generator & CRSF frame transmitter
 ```
@@ -31,32 +39,33 @@ ELRS-Backpack-HT/
 ### Waveshare ESP32-C3 Pinout
 | Peripheral | Pin / Config | Function / Description |
 | :--- | :--- | :--- |
-| **Microcontroller** | Waveshare ESP32-C3 | Native USB CDC (COM20), 160MHz |
+| **Microcontroller** | Waveshare ESP32-C3 | Native USB CDC (`COM20`), 160MHz |
 | **BNO085 SDA** | **GPIO 4** | I2C Data line (400 kHz) |
 | **BNO085 SCL** | **GPIO 5** | I2C Clock line |
 | **BNO085 INT** | **GPIO 6** | Active-LOW hardware data-ready interrupt (internal pull-up enabled) |
 | **BNO085 RST** | **GPIO 7** | Active-LOW hardware reset |
-| **Built-in Switch** | **GPIO 9** | BOOT tactile switch: **Short Click** (<1.5s) = Center / Zero, **Long Press** (>1.5s) = Calibrate / Tare |
-| **Built-in RGB LED** | **GPIO 10** | WS2812 addressable LED: Green=TX OK, Red=TX Error, Cyan=Zeroed, Yellow=Calibrated |
-| **Display** | *None* | Uses real-time USB Serial debug output with visual ASCII level/horizon bars |
+| **Built-in Switch** | **GPIO 9** | BOOT tactile switch: **Click in 5s Blue Boot** or **Hold $\ge 5.0\text{s}$** = Web-IF AP Mode, **Short Click** ($<1.2\text{s}$) = Center / Zero, **Medium Hold** ($1.2\text{s}..5.0\text{s}$) = Calibrate / Tare |
+| **Built-in RGB LED** | **GPIO 10** | WS2812 addressable LED: Pulsing Blue=5s Boot Window, Green=TX OK, Red=TX Error, Breathing Magenta=Web-IF AP, Cyan=Zeroed, Yellow=Calibrated |
+| **Display** | *None* | Uses Wi-Fi Web-IF 3D Telemetry Dashboard (`192.168.4.1`) & USB Serial ASCII level bars |
 
 ### WEMOS LOLIN S3 Mini Pro Pinout (Legacy / Dual-Target Supported)
 | Peripheral | Pin / Config | Notes |
 | :--- | :--- | :--- |
 | **TFT Display** | MOSI=38, MISO=39, SCLK=40, CS=35, DC=36, RST=34, BL=33 | 0.85" 128x128 ST7789/GC9A01 |
 | **Onboard IMU** | SDA=12, SCL=11, Addr=`0x6B` | QMI8658 soldered on bottom of PCB (uses `-az` upward normal reference) |
-| **Buttons** | BTN_LEFT=0, BTN_CENTER=47, BTN_RIGHT=48 | Center: Click=Zero, Long=Calibrate |
+| **Buttons** | BTN_LEFT=0, BTN_CENTER=47, BTN_RIGHT=48 | Center: Click=Zero, Hold 1.2s=Tare, Hold 5.0s=Web-IF |
 | **RGB LED** | PWR=GPIO 7, DATA=GPIO 8 | WS2812 NeoPixel |
 
 ---
 
 ## 3. Serial Debug Display & Interactive Console
 
-Since compact ESP32-C3 boards do not feature a physical display, the firmware provides a high-refresh **Serial Debug & ASCII Level Dashboard** over native USB CDC at 115200 baud.
+Since compact ESP32-C3 boards do not feature a physical display, the firmware provides a high-refresh **Serial Debug & ASCII Level Dashboard** over native USB CDC at 115200 baud alongside the Wi-Fi Web-IF.
 
 ### Interactive Serial Commands:
-- `'c'` or **`SPACE`**: Center / Zero head position (matches pressing the BOOT switch).
+- `'c'` or **`SPACE`**: Center / Zero head position (matches clicking the BOOT switch).
 - `'r'`: Calibrate / Tare the BNO085 IMU.
+- `'W'` *(Shift+w)*: Enter **Wi-Fi Web-IF Configuration & 3D Telemetry AP Mode** (`ELRS-HeadTracker-AP` on `192.168.4.1`).
 - `'f'`: Cycle IMU Fusion Mode (`9-DOF Mag` <-> `AR/VR 9-DOF` <-> `6-DOF Game RV`).
 - `'t'`: Cycle WiFi TX Power (`10dBm` -> `8.5dBm` -> `5dBm` -> `2dBm` -> `19.5dBm` -> `15dBm`).
 - `'w'`: Toggle between LIVE HeadTracker and TEST WAVE mode.
@@ -81,21 +90,46 @@ Since compact ESP32-C3 boards do not feature a physical display, the firmware pr
 
 ---
 
-## 4. Built-in LED State Indications
+## 4. Built-in LED State Indications & 3-Stage Button Engine
 
-The firmware features an intelligent LED priority engine (`ButtonManager`):
-- **Continuous Green (`0, 40, 0`):** ESP-NOW transmission heartbeat OK.
+The firmware features an interrupt-latched 3-stage button & LED priority engine (`ButtonManager` in [`src/button_manager.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/button_manager.cpp)):
+- **Pulsing Blue (`0, 0, 8..120`, ~2 Hz):** 5-second power-up boot window. Clicking the BOOT button (`GPIO 9`) at any point during startup (latched via `FALLING` hardware ISR even during BNO085 I2C initialization) enters Web-IF AP Mode.
+- **Breathing Magenta (`#7A00B8` / `122, 0, 184`, ~0.5 Hz quadratic easing):** Wi-Fi Web Configuration AP Mode is active (`ELRS-HeadTracker-AP`).
+- **Continuous Green (`0, 40, 0`):** Normal Mode 50 Hz ESP-NOW transmission heartbeat OK.
 - **Continuous Red (`40, 0, 0`):** ESP-NOW transmission failure / timeout.
-- **Flashing Cyan (`0, 80, 80`, 500ms):** HeadTracker centered / zeroed (triggered via button or serial).
-- **Flashing Yellow (`80, 80, 0`, 800ms):** BNO085 tare / calibration triggered.
-- **Dim Blue/Cyan (`0, 40, 40`):** Boot / IMU initialization in progress.
+- **Flashing Cyan (`0, 80, 80`, 500ms):** HeadTracker centered / zeroed (triggered via button short click `< 1.2s`, Web-IF button, or serial `'c'`).
+- **Solid/Flashing Yellow (`80, 80, 0`):** Lights at `1.2s` while holding the BOOT button; releasing between `1.2s` and `5.0s` (or clicking *Tare IMU* in Web-IF / serial `'r'`) triggers BNO085 hardware tare / calibration.
+- **5.0-Second Long Hold (`>= 5.0s`):** Holding the BOOT button past Yellow to `5.0s` flashes Magenta and immediately transitions from Normal Mode into Web-IF Configuration Mode (`BTN_ENTER_WEB_CONFIG`).
 
 ---
 
-## 5. Configuration Reference ([`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h))
+## 5. Wi-Fi Web-IF, Real-Time 3D Telemetry & Wireless OTA Architecture
+
+![HeadTracker Web-IF Configuration & 3D Telemetry](img/HeadTracker_WEBIF_screen.png)
+
+### 1. Dual-Mode Operation ([`src/main.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/main.cpp) & [`src/web_config.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_config.cpp))
+- **Normal Mode:** Runs the deterministic 50 Hz ESP-NOW transmitter loop (`10.0 dBm` default RF power). SoftAP, DNS, mDNS, and HTTP/WebSocket servers are completely uninitialized for zero background jitter.
+- **Web Configuration Mode:** Pauses ESP-NOW transmission, disables Wi-Fi power-save (`WIFI_PS_NONE`), and starts an open SoftAP (`ELRS-HeadTracker-AP`) on `192.168.4.1`, a Captive Portal wildcard DNS server (`*` $\to$ `192.168.4.1`), mDNS responder (`http://headtracker.local`), and HTTP/WebSocket server on port 80. No inactivity timeout is enforced; the device remains in AP mode until the user clicks *Save & Reboot* or power-cycles.
+
+### 2. 100% Offline Gzipped Frontend & 60 FPS 3D Renderer ([`src/web_assets.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_assets.h))
+- All HTML, CSS, JavaScript, client-side MD5 hashing, 3D model geometry, and rolling strip-chart rendering are self-contained in a single file compressed with `gzip -9` (`~14.0 KB` in `PROGMEM`) served with `Content-Encoding: gzip`.
+- **30 Hz RFC 6455 WebSocket Stream (`/ws`):** `WebConfigManager` upgrades `/ws` connections on port 80 using `<mbedtls/sha1.h>` + `<mbedtls/base64.h>` and broadcasts JSON telemetry (`pan`, `tilt`, `roll`, `cPan`, `cTilt`, `cRoll`, `sensor`) every `33 ms` (~30 Hz), while accepting instant `{"cmd":"center"}` and `{"cmd":"tare"}` commands from the browser.
+- **Rear-Facing 3D Pilot Head & FPV Goggles (`rotatePointEuler`):** The 3D low-poly pilot head, goggle visor, rear strap cushion/battery pack, overhead strap, dual 5.8 GHz antennas, and forward cyan sight beam are rendered from a rear over-the-shoulder perspective (`[-x3, y3, -z3]`, facing away from the viewer into `-Z`) with `yaw = -panDeg`, `pitch = +tiltDeg`, and `roll = +rollDeg` so every movement of the 3D head matches the user's own head from behind.
+
+### 3. Dynamic ExpressLRS Binding Phrase & MD5 UID Hashing
+- Both the firmware ([`HeadTracker::computeElrsUid()`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/headtracker.cpp) via `<mbedtls/md5.h>`) and the Web-IF client JS compute the standard ExpressLRS 6-byte UID:
+  $$\text{UID}[0..5] = \text{MD5}(\texttt{"-DMY\_BINDING\_PHRASE=\textbackslash""} + \text{phrase} + \texttt{"\textbackslash""})[0..5], \quad \text{UID}[0] \mathrel{\&=} \sim\texttt{0x01}$$
+- Stored in ESP32 NVS (`Preferences` namespace `"elrs_ht"`) alongside all IMU fusion, angle, channel mapping (`TR1..TR16`), inversion, and TX power settings.
+
+### 4. Wireless OTA Firmware Update (`/update`)
+- The **Wireless OTA Update** tab streams `.bin` firmware images via `XMLHttpRequest` multipart upload to `/update`, flashing directly to the inactive OTA partition using Arduino `<Update.h>` with live progress reporting and automatic reboot upon completion.
+
+---
+
+## 6. Configuration Reference ([`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h))
 
 ```cpp
-// 1. ELRS Binding UID (Generated from your ELRS binding phrase)
+// 1. ELRS Binding UID (Generated from your ELRS binding phrase or configured via Web-IF)
 #define MY_CUSTOM_UID {0, 0, 0, 0, 0, 0}
 
 // 2. BNO085 Sensor Fusion Mode
@@ -126,7 +160,7 @@ The firmware features an intelligent LED priority engine (`ButtonManager`):
 
 ---
 
-## 6. EdgeTX Radio Setup Guide
+## 7. EdgeTX Radio Setup Guide
 
 1. **Model Settings:**
    * **Trainer Mode:** Set to `Master / CRSF`.
@@ -141,7 +175,7 @@ The firmware features an intelligent LED priority engine (`ButtonManager`):
 
 ---
 
-## 7. Flashing & Upload Instructions
+## 8. Flashing & Upload Instructions
 
 The default environment in `platformio.ini` is set to `esp32c3`.
 To build and upload directly to your Waveshare ESP32-C3:
@@ -157,7 +191,7 @@ To monitor Serial output and interact with the ASCII level meters:
 
 ---
 
-## 8. 9-DOF Sensor Calculations & Technical Architecture
+## 9. 9-DOF Sensor Calculations & Technical Architecture
 
 ### 1. BNO085 SparkFun Library INT Pin Hang Bug & Watchdog Recovery
 * **Symptom:** ESP32-C3 hangs or enters an infinite reset loop on boot when the BNO085 is connected.
@@ -183,15 +217,15 @@ To monitor Serial output and interact with the ASCII level meters:
 * **9-DOF Rotation Vector (`BNO085_FUSION_MODE 0`):** Fuses Accelerometer + Gyroscope + Magnetometer in the ENU frame with background Dynamic Calibration (DCD) for **zero long-term yaw drift**.
 * **9-DOF AR/VR Stabilized (`BNO085_FUSION_MODE 1`):** Headset-tuned 9-DOF fusion that suppresses micro-jitter and magnetic swimming during slow/stationary viewing.
 * **6-DOF Game Rotation Vector (`BNO085_FUSION_MODE 2`):** Uses only Accelerometer + Gyroscope ($100\%$ immune to speaker/fan magnets, with $\sim 1^\circ\text{--}3^\circ/\text{min}$ yaw drift).
-* **Clean Report Switching & Async Tare:** Switching modes via `'f'` explicitly disables inactive SH-2 report IDs (`interval = 0`) and filters incoming packets by the active report ID so 9-DOF and 6-DOF frames never collide. Both `'f'` and `'r'` (hardware tare) use a deferred `_pendingCenter` latch that waits for fresh post-tare/post-switch quaternion samples before locking $q_0$.
+* **Clean Report Switching & Async Tare:** Switching modes via `'f'` or Web-IF explicitly disables inactive SH-2 report IDs (`interval = 0`) and filters incoming packets by the active report ID so 9-DOF and 6-DOF frames never collide. Both mode switches and `'r'` (hardware tare) use a deferred `_pendingCenter` latch that waits for fresh post-tare/post-switch quaternion samples before locking $q_0$.
 
 ### 4. Non-Volatile Settings Persistence (NVS)
-* Runtime adjustments made via Serial commands (`'f'` fusion mode, `'p'`/`'y'`/`'o'` axis inversions, `'s'` $90^\circ$ pitch/roll swap, and `'t'` WiFi TX power) are automatically saved to ESP32 NVS (`Preferences`) and restored on boot.
-* A compile-time signature of [`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h) defaults is stored alongside NVS values so editing `my_config.h` and reflashing automatically updates the stored defaults.
+* Runtime adjustments made via Web-IF or Serial commands (binding phrase, 6-byte UID, fusion mode, max deflection angles, trainer channel mapping `TR1..TR16`, axis inversions, $90^\circ$ pitch/roll swap, and WiFi TX power) are automatically saved to ESP32 NVS (`Preferences` namespace `"elrs_ht"`) and restored on boot.
+* A compile-time signature of [`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h) defaults is stored alongside NVS values so editing `my_config.h` and reflashing automatically updates the stored defaults unless overridden via the Web-IF.
 
 ### 5. Board Heating & WiFi Transmission Power
 * **Symptom:** The ESP32-C3 feels hot during operation at max TX power ($+19.5\text{ dBm} \approx 89\text{ mW}$).
-* **Solution:** `WIFI_TX_POWER_DEFAULT` is set to `40` ($10.0\text{ dBm} = 10\text{ mW}$) in `my_config.h`, reducing RF dissipation by $\approx 89\%$ while maintaining 20+ meters line-of-sight range. Press **`'t'`** in the serial monitor to cycle TX power live (persisted to NVS).
+* **Solution:** `WIFI_TX_POWER_DEFAULT` is set to `40` ($10.0\text{ dBm} = 10\text{ mW}$) in `my_config.h`, reducing RF dissipation by $\approx 89\%$ while maintaining 20+ meters line-of-sight range. Adjustable live via Web-IF or **`'t'`** in the serial monitor (persisted to NVS).
 
 ### 6. Telemetry Spam & Anti-Replay Filter
 * High-frequency telemetry logs (`LINK`, `VARIO`, `BAT`, `RC Frame`) are set to `LOG_DEBUG` in [`src/application.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/application.cpp) to keep the Serial ASCII dashboard clean.

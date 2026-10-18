@@ -25,6 +25,7 @@
 #include "headtracker.h"
 #include "button_manager.h"
 #include "serial_display.h"
+#include "web_config.h"
 #endif
 
 // ======================================================
@@ -144,6 +145,9 @@ DisplayManager display;
 HeadTracker headtracker;
 ButtonManager buttons;
 SerialDisplay serialDisplay;
+WebConfigManager webConfig;
+String bindingPhrase = "";
+bool webConfigMode = false;
 bool waveMode = false;
 uint32_t lastTxTime = 0;
 uint32_t lastDisplayTime = 0;
@@ -253,16 +257,6 @@ void initWiFi()
     UID[0] &= ~0x01;   // unicast fix
     
     #if defined(ESP32)
-        Preferences prefs;
-        if (prefs.begin("elrs_ht", false)) {
-            if (prefs.getChar("def_txp", -1) == (int8_t)WIFI_TX_POWER_DEFAULT) {
-                currentTxPower = prefs.getChar("tx_pwr", WIFI_TX_POWER_DEFAULT);
-            } else {
-                prefs.putChar("def_txp", (int8_t)WIFI_TX_POWER_DEFAULT);
-                prefs.putChar("tx_pwr", (int8_t)WIFI_TX_POWER_DEFAULT);
-            }
-            prefs.end();
-        }
         WiFi.disconnect();
         WiFi.mode(WIFI_STA); 
         // DAS IST PFLICHT FÜR DEN RAW-FRAME:
@@ -347,14 +341,92 @@ void initInfo()
     LOG_INFO("  1 = RX_ONLY");
     LOG_INFO("  2 = TX_ONLY");
     LOG_INFO("  3 = BOTH");
+    LOG_INFO("  W = Enter WiFi Web-IF Configuration Mode");
     LOG_INFO("==================================================");
 }
 
 void setup() {
+    #if defined(ESP32)
+    // 1. Initialize Buttons & RGB LED immediately (turns LED Blue and arms GPIO 9 interrupt at ms 0)
+    buttons.begin();
+    #endif
+
     initSerial();
     #if defined(ESP32)
-    delay(1000);
+    delay(250);
+
+    #if FEATURE_DISPLAY
+    display.begin();
     #endif
+    headtracker.begin();
+
+    // 2. Load stored UID, Binding Phrase, and TX Power from NVS
+    bool hasValidUid = HeadTracker::loadNetworkConfig(UID, bindingPhrase, currentTxPower);
+    LOG_INFO("Loaded ELRS UID: {%u, %u, %u, %u, %u, %u} (Valid=%s)",
+             UID[0], UID[1], UID[2], UID[3], UID[4], UID[5],
+             hasValidUid ? "YES" : "NO");
+
+    // 3. 5-Second Blue LED Boot Window:
+    //    Enter Web Configuration Mode if:
+    //    - BOOT button (GPIO 9) was clicked/held during IMU init or during this 5s window, OR
+    //    - No valid binding phrase/UID is stored in NVS, OR
+    //    - Serial command 'W' is received
+    bool enterWebMode = !hasValidUid;
+    if (buttons.wasBootButtonLatched()) {
+        LOG_INFO("[BOOT] BOOT button press latched during startup -> Entering Web Config Mode!");
+        enterWebMode = true;
+    }
+
+    if (!enterWebMode) {
+        LOG_INFO("Boot Window (5s Blue LED): Press BOOT button (GPIO 9) or send 'W' for Web-IF AP Mode...");
+        uint32_t bootWindowStart = millis();
+
+        while (millis() - bootWindowStart < 5000) {
+            buttons.updateBootPulseLed();
+            headtracker.update();
+
+            if (buttons.wasBootButtonLatched() || buttons.isBootButtonPressed()) {
+                delay(25); // Brief debounce check
+                if (buttons.wasBootButtonLatched() || buttons.isBootButtonPressed()) {
+                    LOG_INFO("[BOOT] BOOT button pressed during 5s window -> Entering Web Config Mode!");
+                    enterWebMode = true;
+                    break;
+                }
+            }
+
+            if (Serial.available()) {
+                char c = Serial.peek();
+                if (c == 'W') {
+                    Serial.read();
+                    LOG_INFO("[BOOT] Serial 'W' received during 5s window -> Entering Web Config Mode!");
+                    enterWebMode = true;
+                    break;
+                }
+            }
+            delay(5);
+        }
+    } else if (!hasValidUid) {
+        LOG_WARN("[BOOT] No valid UID stored in NVS -> Entering Web Config Mode automatically!");
+    }
+
+    if (enterWebMode) {
+        webConfigMode = true;
+        buttons.clearBootButtonLatch();
+        buttons.flashLed(122, 0, 184, 800); // Immediate Magenta confirmation
+        // Wait for button release so it doesn't immediately trigger Center/Tare
+        uint32_t releaseWait = millis();
+        while (buttons.isBootButtonPressed() && (millis() - releaseWait < 2000)) {
+            buttons.updateApModeLed();
+            delay(10);
+        }
+        buttons.clearBootButtonLatch();
+        webConfig.begin(&headtracker, &buttons, UID, &bindingPhrase, &currentTxPower);
+        serialDisplay.begin();
+        return;
+    }
+
+    // 4. Proceed to Normal 50Hz ESP-NOW Mode
+    LOG_INFO("[BOOT] Proceeding to Normal 50Hz ESP-NOW HeadTracker Mode");
     initWiFi();
     initMac();
     initESP32Queue();
@@ -362,14 +434,14 @@ void setup() {
     vrxModule.init(UID);
     initRamp();
     initInfo();
-
-    #if defined(ESP32)
-    #if FEATURE_DISPLAY
-    display.begin();
-    #endif
-    buttons.begin();
-    headtracker.begin();
     serialDisplay.begin();
+    #else
+    initWiFi();
+    initMac();
+    initESPNow();
+    vrxModule.init(UID);
+    initRamp();
+    initInfo();
     #endif
 }
 
@@ -392,6 +464,13 @@ void loop()
             LOG_INFO("RadioMode changed to %d", radioMode + 1);
         }
         #if defined(ESP32)
+        else if (c == 'W')
+        {
+            if (!webConfigMode) {
+                webConfigMode = true;
+                webConfig.begin(&headtracker, &buttons, UID, &bindingPhrase, &currentTxPower);
+            }
+        }
         else if (c == 'c' || c == ' ')
         {
             headtracker.center();
@@ -452,12 +531,7 @@ void loop()
             }
             currentTxPower = powerSteps[(curIdx + 1) % numSteps];
             esp_wifi_set_max_tx_power(currentTxPower);
-            Preferences prefs;
-            if (prefs.begin("elrs_ht", false)) {
-                prefs.putChar("def_txp", (int8_t)WIFI_TX_POWER_DEFAULT);
-                prefs.putChar("tx_pwr", currentTxPower);
-                prefs.end();
-            }
+            HeadTracker::saveNetworkConfig(UID, bindingPhrase.c_str(), currentTxPower);
             buttons.flashLed(0, 80, 80, 200);
             LOG_INFO(">>> WiFi TX Power set to %d (%.2f dBm) [saved to NVS] <<<", currentTxPower, (float)currentTxPower * 0.25f);
         }
@@ -486,6 +560,12 @@ void loop()
         buttons.flashLed(80, 80, 0, 800); // Yellow calibrate
         headtracker.calibrate();
         LOG_INFO("[EVENT] HeadTracker Calibrated / Tared (BOOT Switch)");
+    } else if (evt == BTN_ENTER_WEB_CONFIG) {
+        if (!webConfigMode) {
+            LOG_INFO("[EVENT] BOOT Switch held >= 5.0s -> Entering Web Configuration Mode!");
+            webConfigMode = true;
+            webConfig.begin(&headtracker, &buttons, UID, &bindingPhrase, &currentTxPower);
+        }
     } else if (evt == BTN_RIGHT_CLICK) {
         waveMode = !waveMode; // Toggle live HT vs Test Wave
         LOG_INFO("Mode switched: %s", waveMode ? "TEST WAVE" : "LIVE HEADTRACKER");
@@ -496,6 +576,13 @@ void loop()
     }
 
     headtracker.update();
+
+    // If Web Configuration AP Mode is active, run Web Server / 30Hz WebSockets / Breathing Magenta LED
+    // and keep ESP-NOW transmission paused.
+    if (webConfigMode) {
+        webConfig.update();
+        return;
+    }
     #endif
 
     // ======================================================
