@@ -94,7 +94,7 @@ Since compact ESP32-C3 boards do not feature a physical display, the firmware pr
 
 ## 4. Built-in LED State Indications & 3-Stage Button Engine
 
-The firmware features an interrupt-latched 3-stage button & LED priority engine (`ButtonManager` in [`src/button_manager.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/button_manager.cpp)):
+The firmware features an interrupt-latched 3-stage button & LED priority engine (`ButtonManager` in [`src/button_manager.cpp`](src/button_manager.cpp)):
 - **Pulsing Blue (`0, 0, 8..120`, ~2 Hz):** 5-second power-up boot window. Clicking the BOOT button (`GPIO 9`) at any point during startup (latched via `FALLING` hardware ISR even during BNO085 I2C initialization) enters Web-IF AP Mode.
 - **Breathing Magenta (`#7A00B8` / `122, 0, 184`, ~0.5 Hz quadratic easing):** Wi-Fi Web Configuration AP Mode is active (`ELRS-HeadTracker-AP`).
 - **Continuous Green (`0, 40, 0`):** Normal Mode 50 Hz ESP-NOW transmission heartbeat OK.
@@ -109,18 +109,18 @@ The firmware features an interrupt-latched 3-stage button & LED priority engine 
 
 ![HeadTracker Web-IF Configuration & 3D Telemetry](img/HeadTracker_WEBIF_screen.png)
 
-### 1. Dual-Mode Operation ([`src/main.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/main.cpp) & [`src/web_config.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_config.cpp))
+### 1. Dual-Mode Operation ([`src/main.cpp`](src/main.cpp) & [`src/web_config.cpp`](src/web_config.cpp))
 - **Normal Mode:** Runs the deterministic 50 Hz ESP-NOW transmitter loop (`10.0 dBm` default RF power). SoftAP, DNS, mDNS, and HTTP/WebSocket servers are completely uninitialized for zero background jitter.
 - **Web Configuration Mode:** Pauses ESP-NOW transmission, disables Wi-Fi power-save (`WIFI_PS_NONE`), and starts an open SoftAP (`ELRS-HeadTracker-AP`) on `192.168.4.1`, a Captive Portal wildcard DNS server (`*` $\to$ `192.168.4.1`), mDNS responder (`http://headtracker.local`), and HTTP/WebSocket server on port 80. No inactivity timeout is enforced; the device remains in AP mode until the user clicks *Save & Reboot* or power-cycles.
 
-### 2. Reproducible 100% Offline Gzipped Frontend & 60 FPS 3D Renderer ([`scripts/generate_web_assets.py`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/scripts/generate_web_assets.py) $\to$ [`src/web_assets.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_assets.h))
-- The complete single-page HTML5, CSS, JavaScript, client-side MD5 hashing, 3D model geometry, and rolling strip-chart source lives in [`scripts/generate_web_assets.py`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/scripts/generate_web_assets.py).
-- Hooked into [`platformio.ini`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/platformio.ini) via `extra_scripts = pre:scripts/generate_web_assets.py` (and runnable standalone via `python scripts/generate_web_assets.py`), it compresses the frontend with deterministic `gzip -9` (`mtime=0`, `~14.0 KB` in `PROGMEM`) into [`src/web_assets.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/web_assets.h) served with `Content-Encoding: gzip`.
+### 2. Reproducible 100% Offline Gzipped Frontend & 60 FPS 3D Renderer ([`scripts/generate_web_assets.py`](scripts/generate_web_assets.py) $\to$ [`src/web_assets.h`](src/web_assets.h))
+- The complete single-page HTML5, CSS, JavaScript, client-side MD5 hashing, 3D model geometry, and rolling strip-chart source lives in [`scripts/generate_web_assets.py`](scripts/generate_web_assets.py).
+- Hooked into [`platformio.ini`](platformio.ini) via `extra_scripts = pre:scripts/generate_web_assets.py` (and runnable standalone via `python scripts/generate_web_assets.py`), it compresses the frontend with deterministic `gzip -9` (`mtime=0`, `~14.0 KB` in `PROGMEM`) into [`src/web_assets.h`](src/web_assets.h) served with `Content-Encoding: gzip`.
 - **30 Hz RFC 6455 WebSocket Stream (`/ws`):** `WebConfigManager` upgrades `/ws` connections on port 80 using `<mbedtls/sha1.h>` + `<mbedtls/base64.h>` and broadcasts JSON telemetry (`pan`, `tilt`, `roll`, `cPan`, `cTilt`, `cRoll`, `sensor`) every `33 ms` (~30 Hz), while accepting instant `{"cmd":"center"}` and `{"cmd":"tare"}` commands from the browser.
 - **Rear-Facing 3D Pilot Head & FPV Goggles (`rotatePointEuler`):** The 3D low-poly pilot head, goggle visor, rear strap cushion/battery pack, overhead strap, dual 5.8 GHz antennas, and forward cyan sight beam are rendered from a rear over-the-shoulder perspective (`[-x3, y3, -z3]`, facing away from the viewer into `-Z`) with `yaw = -panDeg`, `pitch = +tiltDeg`, and `roll = +rollDeg` so every movement of the 3D head matches the user's own head from behind.
 
 ### 3. Dynamic ExpressLRS Binding Phrase & MD5 UID Hashing
-- Both the firmware ([`HeadTracker::computeElrsUid()`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/headtracker.cpp) via `<mbedtls/md5.h>`) and the Web-IF client JS compute the standard ExpressLRS 6-byte UID:
+- Both the firmware ([`HeadTracker::computeElrsUid()`](src/headtracker.cpp) via `<mbedtls/md5.h>`) and the Web-IF client JS compute the standard ExpressLRS 6-byte UID:
   $$\text{UID}[0..5] = \text{MD5}(\texttt{"-DMY\_BINDING\_PHRASE=\textbackslash""} + \text{phrase} + \texttt{"\textbackslash""})[0..5], \quad \text{UID}[0] \mathrel{\&=} \sim\texttt{0x01}$$
 - Stored in ESP32 NVS (`Preferences` namespace `"elrs_ht"`) alongside all IMU fusion, angle, channel mapping (`TR1..TR16`), inversion, and TX power settings.
 
@@ -129,7 +129,7 @@ The firmware features an interrupt-latched 3-stage button & LED priority engine 
 
 ---
 
-## 6. Configuration Reference ([`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h))
+## 6. Configuration Reference (`src/my_config.h` / [`src/my_config.h.example`](src/my_config.h.example))
 
 ```cpp
 // 1. ELRS Binding UID (Generated from your ELRS binding phrase or configured via Web-IF)
@@ -183,19 +183,19 @@ The firmware features an interrupt-latched 3-stage button & LED priority engine 
 The default environment in `platformio.ini` is set to `esp32c3`, and `extra_scripts = pre:scripts/generate_web_assets.py` automatically regenerates `src/web_assets.h` before building.
 
 To manually regenerate `src/web_assets.h` after editing `scripts/generate_web_assets.py`:
-```powershell
+```bash
 python scripts/generate_web_assets.py
 ```
 
 To build and upload directly to your Waveshare ESP32-C3:
 
-```powershell
-$env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"; & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e esp32c3 --target upload
+```bash
+pio run -e esp32c3 --target upload
 ```
 
 To monitor Serial output and interact with the ASCII level meters:
-```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor -e esp32c3
+```bash
+pio device monitor -e esp32c3
 ```
 
 ---
@@ -205,7 +205,7 @@ To monitor Serial output and interact with the ASCII level meters:
 ### 1. BNO085 SparkFun Library INT Pin Hang Bug & Watchdog Recovery
 * **Symptom:** ESP32-C3 hangs or enters an infinite reset loop on boot when the BNO085 is connected.
 * **Root Cause:** When `intPin` is passed to `_bno.begin(addr, Wire, intPin, -1)`, the underlying SparkFun library executes `hal_wait_for_int()`. If INT is high during startup transactions, it hits a 500ms timeout and triggers `hal_hardwareReset()`, restarting the handshake forever.
-* **Solution:** Pass `-1, -1` to `_bno.begin()` in [`src/headtracker.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/headtracker.cpp). Pin 7 (RST) is held LOW on boot for 50ms and released with a 300ms stabilization delay before I2C initialization. Pin 6 (INT) has its internal pull-up enabled (`INPUT_PULLUP`) and is used as an active-LOW fast readiness check alongside a 500 Hz non-blocking poll timer. Additionally, `_bno.wasReset()` is monitored in `update()` to automatically re-enable sensor reports if the BNO085 ever experiences an internal reset.
+* **Solution:** Pass `-1, -1` to `_bno.begin()` in [`src/headtracker.cpp`](src/headtracker.cpp). Pin 7 (RST) is held LOW on boot for 50ms and released with a 300ms stabilization delay before I2C initialization. Pin 6 (INT) has its internal pull-up enabled (`INPUT_PULLUP`) and is used as an active-LOW fast readiness check alongside a 500 Hz non-blocking poll timer. Additionally, `_bno.wasReset()` is monitored in `update()` to automatically re-enable sensor reports if the BNO085 ever experiences an internal reset.
 
 ### 2. Gravity-Aligned 3D Relative Quaternions (Zero Cross-Talk on Sloped Goggles)
 * **Symptom:** Pitch bleeds into roll (and vice-versa) when turning the head (yaw), especially when the IMU PCB is mounted at an angle on curved FPV goggles.
@@ -230,13 +230,13 @@ To monitor Serial output and interact with the ASCII level meters:
 
 ### 4. Non-Volatile Settings Persistence (NVS)
 * Runtime adjustments made via Web-IF or Serial commands (binding phrase, 6-byte UID, fusion mode, max deflection angles, trainer channel mapping `TR1..TR16`, axis inversions, $90^\circ$ pitch/roll swap, and WiFi TX power) are automatically saved to ESP32 NVS (`Preferences` namespace `"elrs_ht"`) and restored on boot.
-* A compile-time signature of [`src/my_config.h`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/my_config.h) defaults is stored alongside NVS values so editing `my_config.h` and reflashing automatically updates the stored defaults unless overridden via the Web-IF.
+* A compile-time signature of `src/my_config.h` defaults is stored alongside NVS values so editing `my_config.h` and reflashing automatically updates the stored defaults unless overridden via the Web-IF.
 
 ### 5. Board Heating & WiFi Transmission Power
 * **Symptom:** The ESP32-C3 feels hot during operation at max TX power ($+19.5\text{ dBm} \approx 89\text{ mW}$).
 * **Solution:** `WIFI_TX_POWER_DEFAULT` is set to `40` ($10.0\text{ dBm} = 10\text{ mW}$) in `my_config.h`, reducing RF dissipation by $\approx 89\%$ while maintaining 20+ meters line-of-sight range. Adjustable live via Web-IF or **`'t'`** in the serial monitor (persisted to NVS).
 
 ### 6. Telemetry Spam & Anti-Replay Filter
-* High-frequency telemetry logs (`LINK`, `VARIO`, `BAT`, `RC Frame`) are set to `LOG_DEBUG` in [`src/application.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/application.cpp) to keep the Serial ASCII dashboard clean.
-* [`src/fake_vrx_fake_trainer.cpp`](file:///c:/Seafile/extbox/Projects/Antigravity/ELRS-Backpack-HT/src/fake_vrx_fake_trainer.cpp) injects dynamic 4-byte random salt (`esp_random()`) and transmits via `esp_wifi_80211_tx(..., false)` to satisfy the ExpressLRS backpack anti-replay filter.
+* High-frequency telemetry logs (`LINK`, `VARIO`, `BAT`, `RC Frame`) are set to `LOG_DEBUG` in [`src/application.cpp`](src/application.cpp) to keep the Serial ASCII dashboard clean.
+* [`src/fake_vrx_fake_trainer.cpp`](src/fake_vrx_fake_trainer.cpp) injects dynamic 4-byte random salt (`esp_random()`) and transmits via `esp_wifi_80211_tx(..., false)` to satisfy the ExpressLRS backpack anti-replay filter.
 
